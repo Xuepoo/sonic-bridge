@@ -23,6 +23,37 @@ Leveraging high-performance audio decoding, short-time Fourier transform (STFT),
 
 ---
 
+## 📥 Installation
+
+SonicBridge provides multiple out-of-the-box installation strategies. Select the method that best matches your system layout:
+
+### 1. Build via Cargo (Rust Ecosystem)
+If you have a Rust toolchain configured locally, compile and install it globally via `cargo`:
+```bash
+cargo install sonic_bridge
+```
+
+### 2. Install from AUR (Arch Linux & Manjaro Users)
+Statically compiled packages are natively distributed inside the Arch User Repository:
+```bash
+# Using paru
+paru -S sonic-bridge-bin
+
+# Using yay
+yay -S sonic-bridge-bin
+```
+
+### 3. Deploy via Docker
+A minimal runtime image built using multi-stage Alpine static linking compilation is published:
+```bash
+docker pull xuepoo/sonic-bridge:latest
+```
+
+### 4. Fetch Pre-compiled Binaries from GitHub Releases
+Navigate to the [Official GitHub Releases Page](https://github.com/Xuepoo/sonic-bridge/releases/tag/v0.1.0) to directly fetch statically linked standalone binaries compiled for your host architecture.
+
+---
+
 ## 🛠️ Quick Start
 
 ### 1. Build from Source

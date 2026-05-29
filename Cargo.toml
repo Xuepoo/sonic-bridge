@@ -2,6 +2,13 @@
 name = "sonic_bridge"
 version = "0.1.0"
 edition = "2021"
+description = "An ultra-fast, lightweight physical music aesthetic and listening translation middleware designed for AI Agents under the LRMD protocol."
+license = "MIT"
+repository = "https://github.com/Xuepoo/sonic-bridge"
+homepage = "https://github.com/Xuepoo/sonic-bridge"
+readme = "README.md"
+keywords = ["music-analysis", "dsp", "ai-agent", "chroma", "dtw"]
+
 
 [dependencies]
 symphonia = { version = "0.5.3", features = ["all"] }

@@ -23,6 +23,37 @@
 
 ---
 
+## 📥 安装方式 (Installation)
+
+本项目提供了多种开箱即用的安装方式，您可以选择最适合您系统架构的途径：
+
+### 1. 从 Crates.io 安装 (Rust 生态)
+如果您本地配置了 Rust 环境，可直接通过 `cargo` 编译并自动加入系统路径：
+```bash
+cargo install sonic_bridge
+```
+
+### 2. 使用 AUR 安装 (Arch Linux 用户)
+如果您使用的是 Arch Linux 及其衍生版（如 Manjaro），可通过您的 AUR 助手直接拉取：
+```bash
+# 使用 paru
+paru -S sonic-bridge-bin
+
+# 使用 yay
+yay -S sonic-bridge-bin
+```
+
+### 3. 使用 Docker 容器部署
+我们也提供了多阶段静态链接打包的极简生产 Docker 镜像：
+```bash
+docker pull xuepoo/sonic-bridge:latest
+```
+
+### 4. 从 GitHub Releases 下载预编译程序
+直接前往 [Releases 官方下载页面](https://github.com/Xuepoo/sonic-bridge/releases/tag/v0.1.0) 下载适用于您系统的免编译静态二进制包。
+
+---
+
 ## 🛠️ 快速上手 (Quick Start)
 
 ### 1. 静态编译 (Build from Source)

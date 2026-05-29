@@ -186,7 +186,7 @@ jobs:
           su builder -c "updpkgsums && makepkg --printsrcinfo > .SRCINFO"
           git add PKGBUILD .SRCINFO
           git commit -m "Update to v${CLEAN_VERSION}" || true
-          git push origin master
+          git push -f origin master
 
       - name: Update AUR binary package (sonic-bridge-bin)
         run: |
@@ -200,4 +200,4 @@ jobs:
           su builder -c "updpkgsums && makepkg --printsrcinfo > .SRCINFO"
           git add PKGBUILD .SRCINFO
           git commit -m "Update to v${CLEAN_VERSION}" || true
-          git push origin master
+          git push -f origin master

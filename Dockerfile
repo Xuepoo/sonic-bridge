@@ -3,7 +3,7 @@
 # ==========================================
 
 # --- Stage 1: Build the statically-linked binary ---
-FROM rust:1.80-alpine AS builder
+FROM rust:alpine AS builder
 
 # Install system compilation dependencies
 RUN apk add --no-cache musl-dev gcc make pkgconfig

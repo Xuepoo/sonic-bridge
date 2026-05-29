@@ -103,7 +103,7 @@ AI companion agents (e.g., `Lumina` or `Hermes`) hook into the `sonic-bridge` ex
 
 ```markdown
 # Flowing Pipeline Integration
-[ alx play ]
+[ Music Playback Triggered ]
     │
     ├──► [ trigger sonic-bridge --onset ]
     │          │

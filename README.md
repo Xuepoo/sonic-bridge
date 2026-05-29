@@ -19,7 +19,7 @@
     *   **方案 C：拍子同步乐理重采样 (Beat-Synchronous Resampling)**：基于自相关函数（Autocorrelation）追踪歌曲拍子，以拍（Beat）为边界进行特征合并。
 *   **XDG 规范配置管理**：严格遵循 **XDG Base Directory Specification**，支持三级 Fallback 自愈式 TOML 配置加载与动态缓存，杜绝污染用户根目录。
 *   **双版本演绎比对 (DTW Aligner)**：物理集成动态时间规整（Dynamic Time Warping）双回溯寻优算法，支持在时间轴非线性扭曲（如歌手自由呼吸、渐慢/渐快）的情况下，完美对齐原唱与翻唱，分析速度与音色细节差异。
-*   **Agent 智能同频共听**：无缝对接主播放器 `alx` (agent-lx-music)。通过推送 LRMD 协议格式报告，让大模型在听歌的指定时间点做出极其专业的乐理剖析与情感反馈。
+*   **Agent 智能同频共听**：无缝对接命令行音乐播放器与客户端。通过推送 LRMD 协议格式报告，让大模型在听歌的指定时间点做出极其专业的乐理剖析与情感反馈。
 
 ---
 

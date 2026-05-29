@@ -19,7 +19,7 @@ Leveraging high-performance audio decoding, short-time Fourier transform (STFT),
     *   **Approach C: Beat-Synchronous Resampling**: Estimate beat intervals using Autocorrelation functions, merging acoustic descriptors by musical beats.
 *   **XDG Specification Compliance**: Fully complies with **XDG Base Directory Specifications** supporting self-healing TOML configuration directories.
 *   **Cross-Version DTW Alignment**: Employs Dynamic Time Warping dual-backtracking pathfinding, enabling robust temporal alignment of Covers and Originals under non-linear tempo changes.
-*   **AI Agent Co-Listening Co-Intelligence**: Designed to seamlessly interface with `alx` (agent-lx-music). By generating standard `.lrmd.md` reports, text-only LLMs get full通感 to act as real-time musicological companions.
+*   **AI Agent Co-Listening Co-Intelligence**: Designed to seamlessly interface with CLI music players and clients. By generating standard `.lrmd.md` reports, text-only LLMs get full synesthetic ability to act as real-time musicological companions.
 
 ---
 

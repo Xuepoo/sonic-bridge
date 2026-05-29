@@ -1,6 +1,6 @@
 [package]
 name = "sonic-bridge"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "An ultra-fast, lightweight physical music aesthetic and listening translation middleware designed for AI Agents under the LRMD protocol."
 license = "MIT"

@@ -194,6 +194,20 @@ jobs:
           cd aur-bin
           CLEAN_VERSION=${{ github.ref_name }}
           CLEAN_VERSION=${CLEAN_VERSION#v}
+
+          # 等待 GitHub Release 资产在 CDN 生效，避免 updpkgsums 下载到 404 页面算出错误的 sha256
+          URL="https://github.com/Xuepoo/sonic-bridge/releases/download/v${CLEAN_VERSION}/sonic-bridge-linux-x86_64"
+          echo "[*] Checking if release asset is available: $URL"
+          for i in {1..30}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L "$URL")
+            if [ "$STATUS" = "200" ]; then
+              echo "[+] Asset is ready (HTTP 200)!"
+              break
+            fi
+            echo "[-] Asset not ready yet (HTTP $STATUS). Waiting 10s... (Attempt $i/30)"
+            sleep 10
+          done
+
           sed -i "s/^pkgver=.*/pkgver=${CLEAN_VERSION}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
           chown -R builder:builder .

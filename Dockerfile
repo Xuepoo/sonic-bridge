@@ -11,8 +11,8 @@ RUN apk add --no-cache musl-dev gcc make pkgconfig
 WORKDIR /usr/src/sonic-bridge
 COPY . .
 
-# Statically compile the Rust binary
-RUN RUSTFLAGS="-C target-feature=+crt-static" cargo build --release
+# Statically compile the Rust binary in musl-native alpine
+RUN cargo build --release
 
 # --- Stage 2: Minimal runtime image ---
 FROM alpine:3.19

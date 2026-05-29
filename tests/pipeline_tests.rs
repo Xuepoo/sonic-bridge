@@ -42,7 +42,7 @@ fn ensure_mock_wav(path: &Path) {
     file.write_all(&1u16.to_le_bytes()).unwrap();
     file.write_all(&1u16.to_le_bytes()).unwrap();
     file.write_all(&sample_rate.to_le_bytes()).unwrap();
-    let byte_rate = sample_rate * 1 * 2;
+    let byte_rate = sample_rate * 2;
     file.write_all(&byte_rate.to_le_bytes()).unwrap();
     file.write_all(&2u16.to_le_bytes()).unwrap();
     file.write_all(&16u16.to_le_bytes()).unwrap();
@@ -56,10 +56,12 @@ fn test_pipeline_with_custom_config() {
     let wav_path = Path::new("tests/fixtures/mock.wav");
     ensure_mock_wav(wav_path);
 
-    let mut custom_config = SonicConfig::default();
-    custom_config.step_size = 1.0;
-    custom_config.onset_mode = true;
-    custom_config.onset_threshold = 0.1;
+    let custom_config = SonicConfig {
+        step_size: 1.0,
+        onset_mode: true,
+        onset_threshold: 0.1,
+        ..Default::default()
+    };
 
     let (meta, segs) = SonicPipeline::process_single(wav_path, &custom_config).unwrap();
 

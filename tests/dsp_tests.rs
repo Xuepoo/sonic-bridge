@@ -5,8 +5,8 @@ fn test_stft_processing() {
     let sample_rate = 22050.0f32;
     let mut signal = vec![0.0f32; 22050]; // 1 second signal
                                           // Generate simple 440Hz sine wave
-    for i in 0..22050 {
-        signal[i] = (2.0 * std::f32::consts::PI * 440.0 * (i as f32) / sample_rate).sin();
+    for (i, sample) in signal.iter_mut().enumerate() {
+        *sample = (2.0 * std::f32::consts::PI * 440.0 * (i as f32) / sample_rate).sin();
     }
 
     let engine = StftEngine::new(1024, 512);

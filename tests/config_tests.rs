@@ -8,6 +8,6 @@ fn test_xdg_path_resolver_and_default_loading() {
     // Test parsing default configuration values
     let default_config = SonicConfig::default();
     assert_eq!(default_config.step_size, 5.0f32);
-    assert_eq!(default_config.onset_mode, false);
+    assert!(!default_config.onset_mode);
     assert_eq!(default_config.onset_threshold, 0.5f32);
 }

@@ -33,7 +33,7 @@ fn generate_sine_wav(
     file.write_all(&1u16.to_le_bytes())?; // audio_format = 1 (PCM)
     file.write_all(&1u16.to_le_bytes())?; // num_channels = 1
     file.write_all(&sample_rate.to_le_bytes())?; // sample_rate
-    let byte_rate = sample_rate * 1 * 2;
+    let byte_rate = sample_rate * 2;
     file.write_all(&byte_rate.to_le_bytes())?;
     file.write_all(&2u16.to_le_bytes())?; // block_align = num_channels * bits_per_sample/8
     file.write_all(&16u16.to_le_bytes())?; // bits_per_sample = 16
@@ -68,7 +68,7 @@ fn test_decode_wav_file() {
     // Original duration is 0.2 seconds.
     // Target sample rate is 22050Hz.
     // So the number of samples should be around 0.2 * 22050 = 4410.
-    assert!(samples.len() > 0);
+    assert!(!samples.is_empty());
     // Allow a small tolerance for rounding
     let expected_len = (0.2 * 22050.0) as usize;
     assert!((samples.len() as isize - expected_len as isize).abs() <= 5);

@@ -20,11 +20,11 @@ FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
 
 # Copy the statically compiled binary
-COPY --from=builder /usr/src/sonic-bridge/target/release/sonic_bridge /usr/local/bin/sonic_bridge
+COPY --from=builder /usr/src/sonic-bridge/target/release/sonic-bridge /usr/local/bin/sonic-bridge
 
 # Define XDG directories in container for safety
 ENV XDG_CONFIG_HOME=/etc/sonic-bridge
 ENV XDG_CACHE_HOME=/var/cache/sonic-bridge
 
 # Expose binary path as entrypoint
-ENTRYPOINT ["/usr/local/bin/sonic_bridge"]
+ENTRYPOINT ["/usr/local/bin/sonic-bridge"]

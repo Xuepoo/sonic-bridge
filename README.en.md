@@ -30,7 +30,7 @@ SonicBridge provides multiple out-of-the-box installation strategies. Select the
 ### 1. Build via Cargo (Rust Ecosystem)
 If you have a Rust toolchain configured locally, compile and install it globally via `cargo`:
 ```bash
-cargo install sonic_bridge
+cargo install sonic-bridge-core
 ```
 
 ### 2. Install from AUR (Arch Linux & Manjaro Users)
@@ -69,7 +69,7 @@ cargo build --release
 # 3. Run Tests
 cargo test
 ```
-*(The compiled executable `./target/release/sonic_bridge` is roughly 5MB)*
+*(The compiled executable `./target/release/sonic-bridge` is roughly 5MB)*
 
 ---
 
@@ -77,16 +77,16 @@ cargo test
 
 ```bash
 # 1. Default 5.0-second interval analysis
-./target/release/sonic_bridge "/path/to/song.mp3"
+sonic-bridge "/path/to/song.mp3"
 
 # 2. Enable Approach B: Event-Driven Onset Adaptive Segmentation
-./target/release/sonic_bridge "/path/to/song.mp3" --onset
+sonic-bridge "/path/to/song.mp3" --onset
 
 # 3. Load custom TOML config
-./target/release/sonic_bridge "/path/to/song.mp3" --config "/path/to/my_config.toml"
+sonic-bridge "/path/to/song.mp3" --config "/path/to/my_config.toml"
 
 # 4. Cross-Version Comparative Analysis (DTW Warp)
-./target/release/sonic_bridge "/path/to/original.mp3" "/path/to/cover_version.mp3"
+sonic-bridge "/path/to/original.mp3" "/path/to/cover_version.mp3"
 ```
 
 ---

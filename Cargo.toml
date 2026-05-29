@@ -1,6 +1,6 @@
 [package]
 name = "sonic-bridge-core"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 description = "An ultra-fast, lightweight physical music aesthetic and listening translation middleware designed for AI Agents under the LRMD protocol."
 license = "MIT"
@@ -19,5 +19,5 @@ serde_json = "1.0"
 toml = "0.8.8"
 
 [[bin]]
-name = "sonic_bridge"
+name = "sonic-bridge"
 path = "src/main.rs"

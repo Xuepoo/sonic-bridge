@@ -8,7 +8,7 @@ vendor: "Xuepoo"
 homepage: "https://github.com/Xuepoo/sonic-bridge"
 license: "MIT"
 contents:
-  - src: ./sonic_bridge
-    dst: /usr/bin/sonic_bridge
+  - src: ./sonic-bridge
+    dst: /usr/bin/sonic-bridge
     file_info:
       mode: 0755

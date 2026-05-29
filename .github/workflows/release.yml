@@ -29,6 +29,9 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             artifact_name: sonic-bridge-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: sonic-bridge-windows-x86_64
 
     steps:
       - name: Checkout code
@@ -43,9 +46,13 @@ jobs:
       - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Rename artifact
+      - name: Rename artifact (Linux/macOS)
         if: runner.os != 'Windows'
-        run: mv target/${{ matrix.target }}/release/sonic_bridge ${{ matrix.artifact_name }}
+        run: mv target/${{ matrix.target }}/release/sonic-bridge ${{ matrix.artifact_name }}
+
+      - name: Rename artifact (Windows)
+        if: runner.os == 'Windows'
+        run: mv target/${{ matrix.target }}/release/sonic-bridge.exe ${{ matrix.artifact_name }}.exe
 
       - name: Package for Linux distributions
         if: runner.os == 'Linux'
@@ -63,13 +70,13 @@ jobs:
           curl -sL https://github.com/goreleaser/nfpm/releases/download/v2.37.1/nfpm_2.37.1_Linux_${NFPM_ARCH}.tar.gz | tar xz nfpm
 
           # Prepare binary for nFPM
-          cp ${{ matrix.artifact_name }} ./sonic_bridge
-          chmod +x ./sonic_bridge
+          cp ${{ matrix.artifact_name }} ./sonic-bridge
+          chmod +x ./sonic-bridge
 
           # Extract version robustly
           VERSION=${GITHUB_REF#refs/tags/v}
           if [[ "$VERSION" == refs/heads/* ]] || [[ "$VERSION" == refs/pull/* ]] || [ -z "$VERSION" ]; then
-            VERSION="0.1.1"
+            VERSION="0.1.0"
           fi
 
           export VERSION
@@ -78,7 +85,8 @@ jobs:
           ./nfpm pkg --packager rpm --target sonic-bridge-linux-${PKG_ARCH}.rpm
           ./nfpm pkg --packager archlinux --target sonic-bridge-linux-${PKG_ARCH}.pkg.tar.zst
 
-      - name: Upload artifact
+      - name: Upload artifact (Linux/macOS)
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
@@ -87,6 +95,13 @@ jobs:
             *.deb
             *.rpm
             *.pkg.tar.zst
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.exe
 
   release:
     name: Create Release

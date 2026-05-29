@@ -30,7 +30,7 @@
 ### 1. 从 Crates.io 安装 (Rust 生态)
 如果您本地配置了 Rust 环境，可直接通过 `cargo` 编译并自动加入系统路径：
 ```bash
-cargo install sonic_bridge
+cargo install sonic-bridge-core
 ```
 
 ### 2. 使用 AUR 安装 (Arch Linux 用户)
@@ -69,7 +69,7 @@ cargo build --release
 # 3. 运行测试套件验证
 cargo test
 ```
-*(编译好的二进制程序 `./target/release/sonic_bridge` 仅约 5MB，可直接运行)*
+*(编译好的二进制程序 `./target/release/sonic-bridge` 仅约 5MB，可直接运行)*
 
 ---
 
@@ -77,16 +77,16 @@ cargo test
 
 ```bash
 # 1. 默认 5.0 秒步长审美分析
-./target/release/sonic_bridge "/path/to/song.mp3"
+sonic-bridge "/path/to/song.mp3"
 
 # 2. 启用方案 B：基于 Onset 瞬态事件的自适应审美切分（推荐复杂、高速音乐）
-./target/release/sonic_bridge "/path/to/song.mp3" --onset
+sonic-bridge "/path/to/song.mp3" --onset
 
 # 3. 导入自定义 TOML 配置文件
-./target/release/sonic_bridge "/path/to/song.mp3" --config "/path/to/my_config.toml"
+sonic-bridge "/path/to/song.mp3" --config "/path/to/my_config.toml"
 
 # 4. 双版本比对（DTW 动态时间规整对齐）
-./target/release/sonic_bridge "/path/to/original.mp3" "/path/to/cover_version.mp3"
+sonic-bridge "/path/to/original.mp3" "/path/to/cover_version.mp3"
 ```
 
 ---

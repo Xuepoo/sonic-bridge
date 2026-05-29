@@ -6,7 +6,7 @@ An ultra-fast, lightweight, zero-pretrain-model physical music aesthetic & liste
 
 **SonicBridge** bridges the physical listening gap (Modal Gap) for AI Agents. It is a digital signal processing (DSP) tool written entirely in Rust, with no heavy machine learning dependencies.
 
-Leveraging high-performance audio decoding, short-time Fourier transform (STFT), Chroma pitch class projection, and Dynamic Time Warping (DTW) alignment, SonicBridge decouples raw 1D waveforms into **LRMD (LLM-Readable Music Descriptor) reports** in a fraction of a second. This empowers AI companions (like Agents in the 落雪音乐 ecosystem) to truly "hear" music, sense vocal timbral emotional shifts, parse arrangement spaces, and compare Cover version performance differences.
+Leveraging high-performance audio decoding, short-time Fourier transform (STFT), Chroma pitch class projection, and Dynamic Time Warping (DTW) alignment, SonicBridge decouples raw 1D waveforms into **LRMD (LLM-Readable Music Descriptor) reports** in a fraction of a second. This empowers AI companion agents to truly "hear" music, sense vocal timbral emotional shifts, parse arrangement spaces, and compare Cover version performance differences.
 
 ---
 

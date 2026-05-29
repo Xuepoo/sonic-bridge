@@ -99,7 +99,7 @@ Depending on the track genre, fine-tuning the `config.toml` config dramatically 
 
 ## 🤖 4. AI Agent System Integration
 
-AI companion agents (e.g., `Lumina` or `Hermes`) hook into the `sonic-bridge` execution pipeline by reading the generated `.lrmd.md` file.
+AI companion agents hook into the `sonic-bridge` execution pipeline by reading the generated `.lrmd.md` file.
 
 ```markdown
 # Flowing Pipeline Integration

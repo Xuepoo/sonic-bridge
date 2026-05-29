@@ -1,3 +1,4 @@
+use sonic_bridge::config::SonicConfig;
 use sonic_bridge::pipeline::SonicPipeline;
 use std::env;
 use std::fs::File;
@@ -12,16 +13,21 @@ fn main() {
         return;
     }
 
+    let mut config_path = None;
     let mut use_onset = false;
     let mut clean_args = Vec::new();
-    for (i, arg) in args.iter().enumerate() {
-        if i == 0 {
-            continue;
-        }
-        if arg == "--onset" {
+
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--config" && i + 1 < args.len() {
+            config_path = Some(args[i + 1].clone());
+            i += 2;
+        } else if args[i] == "--onset" {
             use_onset = true;
+            i += 1;
         } else {
-            clean_args.push(arg);
+            clean_args.push(args[i].clone());
+            i += 1;
         }
     }
 
@@ -30,16 +36,36 @@ fn main() {
         return;
     }
 
+    // Load SonicConfig
+    let mut config = if let Some(ref path_str) = config_path {
+        SonicConfig::load_from_file(Path::new(path_str)).unwrap_or_else(|e| {
+            eprintln!(
+                "[!] Warning: Failed to load config from {}: {}. Falling back to default.",
+                path_str, e
+            );
+            SonicConfig::default()
+        })
+    } else {
+        SonicConfig::load_or_default()
+    };
+
+    // Command-line flag override
+    if use_onset {
+        config.onset_mode = true;
+    }
+
     if clean_args.len() == 1 {
         // 单音轨审美分析模式
-        let audio_path = Path::new(clean_args[0]);
+        let audio_path = Path::new(&clean_args[0]);
+        let is_onset_active = config.onset_mode;
         println!(
-            "[*] Analyzing single track: {} (onset mode: {}) ...",
+            "[*] Analyzing single track: {} (onset mode: {}, step size: {:.1}s) ...",
             audio_path.display(),
-            use_onset
+            is_onset_active,
+            config.step_size
         );
 
-        match SonicPipeline::process_single(audio_path, use_onset) {
+        match SonicPipeline::process_single(audio_path, &config) {
             Ok((meta, segs)) => {
                 let mut report = Vec::new();
                 report.push("# SonicBridge: LLM-Readable Music Descriptor (LRMD)\n".to_string());
@@ -61,10 +87,13 @@ fn main() {
                     meta.estimated_global_key
                 ));
 
-                let interval_header = if use_onset {
+                let interval_header = if is_onset_active {
                     "## 2. Spatiotemporal Track Analysis (Adaptive Onset Intervals)"
                 } else {
-                    "## 2. Spatiotemporal Track Analysis (5-Second Intervals)"
+                    &format!(
+                        "## 2. Spatiotemporal Track Analysis ({:.1}-Second Intervals)",
+                        config.step_size
+                    )
                 };
                 report.push(interval_header.to_string());
                 report.push("| Timeline | Chord | Dynamic Intensity | Timbral Brightness | Rhythmic & Transient Activity |".to_string());
@@ -102,8 +131,8 @@ fn main() {
         }
     } else if clean_args.len() == 2 {
         // 双音轨比对模式
-        let path_a = Path::new(clean_args[0]);
-        let path_b = Path::new(clean_args[1]);
+        let path_a = Path::new(&clean_args[0]);
+        let path_b = Path::new(&clean_args[1]);
         println!(
             "[*] Running DTW Comparative Analysis:\n  - Track A: {}\n  - Track B: {}",
             path_a.display(),
@@ -140,6 +169,8 @@ fn main() {
 fn print_usage() {
     println!("SonicBridge CLI - LLM-Readable Acoustic Transformer");
     println!("Usage:");
-    println!("  1. Single track analysis:      cargo run -- <path_to_audio> [--onset]");
+    println!(
+        "  1. Single track analysis:      cargo run -- <path_to_audio> [--onset] [--config <path>]"
+    );
     println!("  2. Comparative version analysis: cargo run -- <path_to_track_A> <path_to_track_B>");
 }

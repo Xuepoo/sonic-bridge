@@ -1,4 +1,5 @@
 use crate::alignment::dtw::DtwAligner;
+use crate::config::SonicConfig;
 use crate::decoder::AudioDecoder;
 use crate::dsp::spectrogram::StftEngine;
 use crate::musicology::chroma::ChordClassifier;
@@ -31,7 +32,7 @@ impl SonicPipeline {
     /// 执行单音轨的完整物理声学与乐理解构 pipeline，生成大模型友好描述符
     pub fn process_single(
         audio_path: &Path,
-        use_onset_segmentation: bool,
+        config: &SonicConfig,
     ) -> Result<(GlobalMetadata, Vec<SegmentAesthetic>), String> {
         // 1. 音频解码与重采样 (22050Hz)
         let decoder = AudioDecoder::new(audio_path)?;
@@ -51,13 +52,13 @@ impl SonicPipeline {
         let mut segments = Vec::new();
         let frame_duration = hop_size as f32 / sr;
 
-        // 我们以 5 秒作为一个审美评估区间 (LRMD 协议区间)
-        let frames_per_5s = (5.0 / frame_duration).round() as usize;
+        // 根据 config.step_size 决定自适应分块帧数
+        let frames_per_step = (config.step_size / frame_duration).round() as usize;
 
         let mut split_points = Vec::new();
-        if use_onset_segmentation {
+        if config.onset_mode {
             use crate::dsp::onset::OnsetDetector;
-            let detector = OnsetDetector::new(0.5);
+            let detector = OnsetDetector::new(config.onset_threshold);
             let boundary_frames = detector.detect_boundaries(&spectrogram);
             let mut temp = vec![0];
             for &b in &boundary_frames {
@@ -75,14 +76,14 @@ impl SonicPipeline {
         let mut interval_idx = 0;
 
         while frame_idx < spectrogram.len() {
-            let end_frame = if use_onset_segmentation {
+            let end_frame = if config.onset_mode {
                 split_points
                     .iter()
                     .copied()
                     .find(|&p| p > frame_idx)
                     .unwrap_or(spectrogram.len())
             } else {
-                (frame_idx + frames_per_5s).min(spectrogram.len())
+                (frame_idx + frames_per_step).min(spectrogram.len())
             };
 
             let sub_specs = &spectrogram[frame_idx..end_frame];
@@ -173,13 +174,13 @@ impl SonicPipeline {
             // D. 和弦估计
             let chord = chord_classifier.classify(&sum_chroma);
 
-            let (t_start, t_end) = if use_onset_segmentation {
+            let (t_start, t_end) = if config.onset_mode {
                 let start_time = frame_idx as f32 * frame_duration;
                 let end_time = (end_frame as f32 * frame_duration).min(duration);
                 (start_time, end_time)
             } else {
-                let start_time = interval_idx as f32 * 5.0;
-                let end_time = (start_time + 5.0).min(duration);
+                let start_time = interval_idx as f32 * config.step_size;
+                let end_time = (start_time + config.step_size).min(duration);
                 (start_time, end_time)
             };
 
@@ -221,8 +222,9 @@ impl SonicPipeline {
 
     /// 执行双版本对比演绎分析 pipeline，产生带 DTW 时间戳对齐的版本比对数据
     pub fn process_comparative(path_a: &Path, path_b: &Path) -> Result<String, String> {
-        let (meta_a, segs_a) = Self::process_single(path_a, false)?;
-        let (meta_b, segs_b) = Self::process_single(path_b, false)?;
+        let default_config = SonicConfig::default();
+        let (meta_a, segs_a) = Self::process_single(path_a, &default_config)?;
+        let (meta_b, segs_b) = Self::process_single(path_b, &default_config)?;
 
         // 1. 运行 DTW 时序规整对齐
         let energy_a: Vec<f32> = segs_a.iter().map(|s| s.raw_energy).collect();

@@ -216,8 +216,39 @@ impl SonicPipeline {
             estimated_global_key: global_key,
             tempo_feeling: "Moderate & Flowing (Andante/Moderato)".to_string(),
         };
+        let merged_segments = Self::merge_segments(segments);
+        Ok((global_metadata, merged_segments))
+    }
 
-        Ok((global_metadata, segments))
+    /// Spatiotemporal Chunk Merger: compresses consecutive slices sharing identical Chord, Timbre, and Dynamic features into Phrase Blocks
+    fn merge_segments(segs: Vec<SegmentAesthetic>) -> Vec<SegmentAesthetic> {
+        if segs.is_empty() {
+            return segs;
+        }
+
+        let mut merged = Vec::new();
+        let mut current = segs[0].clone();
+
+        for next_seg in segs.into_iter().skip(1) {
+            if current.chord == next_seg.chord
+                && current.dynamic_level == next_seg.dynamic_level
+                && current.timbre_brightness == next_seg.timbre_brightness
+                && current.rhythm_activity == next_seg.rhythm_activity
+            {
+                let cur_parts: Vec<&str> = current.time_range.split(" - ").collect();
+                let next_parts: Vec<&str> = next_seg.time_range.split(" - ").collect();
+                if cur_parts.len() == 2 && next_parts.len() == 2 {
+                    current.time_range = format!("{} - {}", cur_parts[0], next_parts[1]);
+                }
+                current.raw_energy = (current.raw_energy + next_seg.raw_energy) / 2.0;
+                current.raw_centroid = (current.raw_centroid + next_seg.raw_centroid) / 2.0;
+            } else {
+                merged.push(current);
+                current = next_seg;
+            }
+        }
+        merged.push(current);
+        merged
     }
 
     /// 执行双版本对比演绎分析 pipeline，产生带 DTW 时间戳对齐的版本比对数据

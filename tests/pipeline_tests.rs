@@ -75,4 +75,18 @@ fn test_pipeline_with_custom_config() {
         assert!(!seg.timbre_brightness.is_empty());
         assert!(!seg.rhythm_activity.is_empty());
     }
+
+    // Verify that consecutive identical aesthetic segments are successfully merged (Issue #5)
+    for i in 0..segs.len().saturating_sub(1) {
+        let current = &segs[i];
+        let next = &segs[i + 1];
+        let is_identical = current.chord == next.chord
+            && current.dynamic_level == next.dynamic_level
+            && current.timbre_brightness == next.timbre_brightness
+            && current.rhythm_activity == next.rhythm_activity;
+        assert!(
+            !is_identical,
+            "Segment merger failed: consecutive identical segments found!"
+        );
+    }
 }

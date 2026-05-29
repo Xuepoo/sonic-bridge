@@ -1,0 +1,11 @@
+[package]
+name = "sonic_bridge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+symphonia = { version = "0.5.3", features = ["all"] }
+rustfft = "6.1.0"
+ndarray = "0.15.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

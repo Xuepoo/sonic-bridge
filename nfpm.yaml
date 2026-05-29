@@ -1,0 +1,14 @@
+name: sonic-bridge
+arch: "${ARCH}"
+platform: linux
+version: "${VERSION}"
+maintainer: "Xuepoo <xuepoofoter@gmail.com>"
+description: "An ultra-fast, lightweight physical music aesthetic and listening translation middleware for AI Agents under the LRMD protocol."
+vendor: "Xuepoo"
+homepage: "https://github.com/Xuepoo/sonic-bridge"
+license: "MIT"
+contents:
+  - src: ./sonic_bridge
+    dst: /usr/bin/sonic_bridge
+    file_info:
+      mode: 0755

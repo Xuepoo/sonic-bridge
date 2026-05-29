@@ -50,7 +50,7 @@ docker pull xuepoo/sonic-bridge:latest
 ```
 
 ### 4. 从 GitHub Releases 下载预编译程序
-直接前往 [Releases 官方下载页面](https://github.com/Xuepoo/sonic-bridge/releases/tag/v0.1.0) 下载适用于您系统的免编译静态二进制包。
+直接前往 [Releases 官方下载页面](https://github.com/Xuepoo/sonic-bridge/releases/latest) 下载适用于您系统的免编译静态二进制包。
 
 ---
 
@@ -108,7 +108,7 @@ cargo test
 *   **Crates.io**：
     ```toml
     [dependencies]
-    sonic-bridge = "0.1.0"
+    sonic-bridge-core = "0.1"
     ```
 *   **GitHub Actions CI/CD**：内置了完善的自动化流程，在发布版本 Tag 时（如 `v0.1.0`）会自动构建多架构镜像并分发至 Dockerhub、crates.io 与 AUR。
 

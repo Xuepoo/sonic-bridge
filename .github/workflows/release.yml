@@ -1,106 +1,125 @@
-name: Publish & Release Delivery
+name: Release
 
 on:
   push:
     tags:
-      - 'v*' # Trigger release workflow on version tags e.g., v1.0.0
+      - "v*"
+  workflow_dispatch:
 
 env:
-  CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # Dockerhub Configurations
-  DOCKER_IMAGE_NAME: xuepoo/sonic-bridge
-  # AUR Configurations
-  AUR_PACKAGE_NAME: sonic-bridge-bin
 
 jobs:
-  build-and-deploy:
-    name: Build Binary & Publish to Ecosystems
-    runs-on: ubuntu-latest
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: sonic-bridge-linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact_name: sonic-bridge-linux-aarch64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: sonic-bridge-macos-x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact_name: sonic-bridge-macos-aarch64
 
     steps:
-      - name: Checkout Source Code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Rust Stable Toolchain
+      - name: Setup Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename artifact
+        if: runner.os != 'Windows'
+        run: mv target/${{ matrix.target }}/release/sonic_bridge ${{ matrix.artifact_name }}
+
+      - name: Package for Linux distributions
+        if: runner.os == 'Linux'
+        run: |
+          ARCH_TYPE=$(uname -m)
+          if [ "$ARCH_TYPE" = "aarch64" ]; then
+            NFPM_ARCH="arm64"
+            ARCH="arm64"
+            PKG_ARCH="aarch64"
+          else
+            NFPM_ARCH="x86_64"
+            ARCH="amd64"
+            PKG_ARCH="x86_64"
+          fi
+          curl -sL https://github.com/goreleaser/nfpm/releases/download/v2.37.1/nfpm_2.37.1_Linux_${NFPM_ARCH}.tar.gz | tar xz nfpm
+
+          # Prepare binary for nFPM
+          cp ${{ matrix.artifact_name }} ./sonic_bridge
+          chmod +x ./sonic_bridge
+
+          # Extract version robustly
+          VERSION=${GITHUB_REF#refs/tags/v}
+          if [[ "$VERSION" == refs/heads/* ]] || [[ "$VERSION" == refs/pull/* ]] || [ -z "$VERSION" ]; then
+            VERSION="0.1.1"
+          fi
+
+          export VERSION
+          export ARCH
+          ./nfpm pkg --packager deb --target sonic-bridge-linux-${PKG_ARCH}.deb
+          ./nfpm pkg --packager rpm --target sonic-bridge-linux-${PKG_ARCH}.rpm
+          ./nfpm pkg --packager archlinux --target sonic-bridge-linux-${PKG_ARCH}.pkg.tar.zst
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_name }}
+            *.deb
+            *.rpm
+            *.pkg.tar.zst
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Cargo Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-release-
-
-      # -------------------------------------------------------------
-      # Step 1: Rust Static Cross-Compilation for Production Binary
-      # -------------------------------------------------------------
-      - name: Compile Release Binary
-        run: cargo build --release --locked
-
-      # -------------------------------------------------------------
-      # Step 2: Publish to Crates.io
-      # -------------------------------------------------------------
-      - name: Publish Package to Crates.io
+      - name: Publish sonic-bridge-core
+        run: cargo publish --no-verify || echo "Crate version might already be published, skipping..."
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
-        run: cargo publish --no-verify || echo "Crate version might already be published, skipping..."
-
-      # -------------------------------------------------------------
-      # Step 3: Build & Publish Multi-Platform Docker Image
-      # -------------------------------------------------------------
-      - name: Set up QEMU for Multi-Platform Builds
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ env.DOCKER_IMAGE_NAME }}:latest
-            ${{ env.DOCKER_IMAGE_NAME }}:${{ github.ref_name }}
-
-      # -------------------------------------------------------------
-      # Step 4: Publish to AUR (Arch User Repository)
-      # -------------------------------------------------------------
-      - name: Publish release to AUR
-        env:
-          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-        run: |
-          # 1. Setup SSH agent and add AUR private key
-          mkdir -p ~/.ssh
-          echo "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
-
-          # 2. Clone AUR PKGBUILD repository
-          git clone ssh://aur@aur.archlinux.org/${{ env.AUR_PACKAGE_NAME }}.git /tmp/aur
-          cd /tmp/aur
-
-          # 3. Update PKGBUILD with new version and SHASUMS
-          # Dynamic PKGBUILD updates will be populated here during deployment
-          sed -i "s/pkgver=.*/pkgver=${{ github.ref_name }}/g" PKGBUILD
-          makepkg --printsrcinfo > .SRCINFO
-
-          # 4. Commit and push PKGBUILD changes to AUR git repo
-          git config user.name "Xuepoo Actions"
-          git config user.email "xuepoo@github.actions.com"
-          git add PKGBUILD .SRCINFO
-          git commit -m "Update to ${{ github.ref_name }} via CI/CD Release"
-          git push origin master

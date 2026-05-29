@@ -50,7 +50,7 @@ docker pull xuepoo/sonic-bridge:latest
 ```
 
 ### 4. Fetch Pre-compiled Binaries from GitHub Releases
-Navigate to the [Official GitHub Releases Page](https://github.com/Xuepoo/sonic-bridge/releases/tag/v0.1.0) to directly fetch statically linked standalone binaries compiled for your host architecture.
+Navigate to the [Official GitHub Releases Page](https://github.com/Xuepoo/sonic-bridge/releases/latest) to directly fetch statically linked standalone binaries compiled for your host architecture.
 
 ---
 
@@ -108,7 +108,7 @@ For detailed field explanations, XDG environment interceptions, and musical styl
 *   **Crates.io**:
     ```toml
     [dependencies]
-    sonic-bridge = "0.1.0"
+    sonic-bridge-core = "0.1"
     ```
 *   **GitHub Actions CI/CD**: Automatically builds multi-platform binaries, publishing to Dockerhub, crates.io, and AUR upon version tags (e.g. `v0.1.0`).
 

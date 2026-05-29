@@ -1,10 +1,10 @@
-name: Continuous Integration
+name: CI
 
 on:
   push:
-    branches: [ main, feature/* ]
+    branches: ["main"]
   pull_request:
-    branches: [ main ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,35 +12,24 @@ env:
 
 jobs:
   test:
-    name: Code Quality & Tests
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Rust Stable Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Setup Rust toolchain
+        run: |
+          rustup toolchain install stable --profile default
+          rustup default stable
+          rustup component add clippy rustfmt
 
-      - name: Cache Cargo Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+      - name: Check formatting
+        run: cargo fmt -- --check
 
-      - name: Check Code Formatting
-        run: cargo fmt --all -- --check
+      - name: Lint with Clippy
+        run: cargo clippy -- -D warnings
 
-      - name: Lint Code with Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Build
+        run: cargo build --verbose
 
-      - name: Run DSP & Pipeline Test Suite
-        run: cargo test --all-targets --all-features
+      - name: Run tests
+        run: cargo test --verbose

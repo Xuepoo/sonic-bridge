@@ -72,6 +72,19 @@ impl SonicPipeline {
             split_points = temp;
         }
 
+        // 预扫描计算全局最大 RMS 动态，以供局部相对 RMS (Relative RMS) 分类使用
+        let mut global_max_rms = 0.0f32;
+        for frame in &spectrogram {
+            let sum_power: f32 = frame.iter().map(|&x| x * x).sum();
+            let rms = (sum_power / frame.len() as f32).sqrt();
+            if rms > global_max_rms {
+                global_max_rms = rms;
+            }
+        }
+        if global_max_rms < 0.0001 {
+            global_max_rms = 1.0; // 避免除以零
+        }
+
         let mut frame_idx = 0;
         let mut interval_idx = 0;
 
@@ -114,10 +127,10 @@ impl SonicPipeline {
                 let centroid = if den > 0.0 { num / den } else { 0.0 };
                 sum_centroid += centroid;
 
-                // 色度向量合并 (基于粗略的 513 频段到 12 半音阶物理投影)
+                // 色度向量合并 (基于 200Hz - 2kHz 审美带通投影，过滤低频共振与高频刺耳物，聚焦旋律音高)
                 for (bin, &mag) in frame.iter().enumerate() {
                     let freq = bin as f32 * (sr / window_size as f32);
-                    if freq > 20.0 {
+                    if (200.0..=2000.0).contains(&freq) {
                         // 物理公式：将频率转化为 MIDI 音高 p = 69 + 12 * log2(f/440)
                         let midi_pitch = 69.0 + 12.0 * (freq / 440.0).log2();
                         let pitch_class = (midi_pitch.round() as i32) % 12;
@@ -130,23 +143,57 @@ impl SonicPipeline {
                 counts += 1;
             }
 
+            let (t_start, t_end) = if config.onset_mode {
+                let start_time = frame_idx as f32 * frame_duration;
+                let end_time = (end_frame as f32 * frame_duration).min(duration);
+                (start_time, end_time)
+            } else {
+                let start_time = interval_idx as f32 * config.step_size;
+                let end_time = (start_time + config.step_size).min(duration);
+                (start_time, end_time)
+            };
+
             let mean_rms = sum_rms / counts as f32;
             let mean_centroid = sum_centroid / counts as f32;
 
-            // 心理声学特征映射
-            // A. 动态映射
-            let dynamic_desc = if mean_rms < 0.005 {
+            // 计算分片中的时域 Peak 值以求出 Crest Factor（波峰因数），量化混音的冲击感与呼吸感
+            let start_sample = (t_start * sr) as usize;
+            let end_sample = ((t_end * sr) as usize).min(samples.len());
+            let mut peak_val = 0.0f32;
+            if start_sample < end_sample {
+                for &s in &samples[start_sample..end_sample] {
+                    let abs_s = s.abs();
+                    if abs_s > peak_val {
+                        peak_val = abs_s;
+                    }
+                }
+            }
+            let crest_factor = if mean_rms > 0.0001 {
+                peak_val / mean_rms
+            } else {
+                0.0
+            };
+
+            // A. 自适应动态电平映射（通过 relative_rms 和 crest_factor 联合映射，优雅解决现代音乐砖墙限幅饱满带来的 Fortissimo 霸屏 Bug）
+            let relative_rms = mean_rms / global_max_rms;
+            let dynamic_desc = if relative_rms < 0.01 {
                 "Silent/Near-Silent"
-            } else if mean_rms < 0.02 {
+            } else if relative_rms < 0.12 {
                 "Very Soft (Pianissimo)"
-            } else if mean_rms < 0.06 {
+            } else if relative_rms < 0.35 {
                 "Soft & Intimate (Piano)"
-            } else if mean_rms < 0.15 {
+            } else if relative_rms < 0.65 {
                 "Moderately Intense (Mezzo-Forte)"
-            } else if mean_rms < 0.25 {
+            } else if relative_rms < 0.85 {
                 "Loud & Energetic (Forte)"
             } else {
-                "Exploding Intensity (Fortissimo)"
+                // 极高电平区：如果 Crest Factor 过低，说明是被 maximizer 压缩到极限的响度，标记为 Loud & Dense
+                // 如果 Crest Factor 较高，说明是具备强烈 Transient 冲击感的物理爆发点，标记为 Fortissimo
+                if crest_factor < 2.5 {
+                    "Loud & Dense (Forte)"
+                } else {
+                    "Exploding Intensity (Fortissimo)"
+                }
             };
 
             // B. 音色亮度映射
@@ -162,10 +209,10 @@ impl SonicPipeline {
                 "Piercing & Airy (Airy presence)"
             };
 
-            // C. 节奏活跃度估算 (粗略基于频谱能量变异系数)
-            let rhythm_desc = if mean_rms < 0.01 {
+            // C. 节奏活跃度估算 (基于相对 RMS，使整体对不同歌曲尺度的活跃度反映更加健康自适应)
+            let rhythm_desc = if relative_rms < 0.02 {
                 "Static & Ambient sustained notes"
-            } else if mean_rms < 0.08 {
+            } else if relative_rms < 0.25 {
                 "Flowing & Legato (Gentle melodic flow)"
             } else {
                 "Steady Beat (Clear rhythmic dynamic)"
@@ -173,16 +220,6 @@ impl SonicPipeline {
 
             // D. 和弦估计
             let chord = chord_classifier.classify(&sum_chroma);
-
-            let (t_start, t_end) = if config.onset_mode {
-                let start_time = frame_idx as f32 * frame_duration;
-                let end_time = (end_frame as f32 * frame_duration).min(duration);
-                (start_time, end_time)
-            } else {
-                let start_time = interval_idx as f32 * config.step_size;
-                let end_time = (start_time + config.step_size).min(duration);
-                (start_time, end_time)
-            };
 
             segments.push(SegmentAesthetic {
                 time_range: format!("{:.1}s - {:.1}s", t_start, t_end),

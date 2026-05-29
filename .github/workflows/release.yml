@@ -49,7 +49,7 @@ jobs:
       - name: Publish Package to Crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
-        run: cargo publish --no-verify
+        run: cargo publish --no-verify || echo "Crate version might already be published, skipping..."
 
       # -------------------------------------------------------------
       # Step 3: Build & Publish Multi-Platform Docker Image

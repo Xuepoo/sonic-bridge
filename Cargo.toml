@@ -17,11 +17,3 @@ ndarray = "0.15.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8.8"
-
-[[bin]]
-name = "sonic-bridge"
-path = "src/main.rs"
-
-[[bin]]
-name = "sonic-bridge-mcp"
-path = "src/bin/sonic-bridge-mcp.rs"

@@ -1,4 +1,4 @@
-use sonic_bridge::decoder::AudioDecoder;
+use sonic_bridge_core::decoder::AudioDecoder;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;

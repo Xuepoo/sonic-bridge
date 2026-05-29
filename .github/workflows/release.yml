@@ -1,0 +1,106 @@
+name: Publish & Release Delivery
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger release workflow on version tags e.g., v1.0.0
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Dockerhub Configurations
+  DOCKER_IMAGE_NAME: xuepoo/sonic-bridge
+  # AUR Configurations
+  AUR_PACKAGE_NAME: sonic-bridge-bin
+
+jobs:
+  build-and-deploy:
+    name: Build Binary & Publish to Ecosystems
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+
+      # -------------------------------------------------------------
+      # Step 1: Rust Static Cross-Compilation for Production Binary
+      # -------------------------------------------------------------
+      - name: Compile Release Binary
+        run: cargo build --release --locked
+
+      # -------------------------------------------------------------
+      # Step 2: Publish to Crates.io
+      # -------------------------------------------------------------
+      - name: Publish Package to Crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        run: cargo publish --no-verify
+
+      # -------------------------------------------------------------
+      # Step 3: Build & Publish Multi-Platform Docker Image
+      # -------------------------------------------------------------
+      - name: Set up QEMU for Multi-Platform Builds
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.DOCKER_IMAGE_NAME }}:latest
+            ${{ env.DOCKER_IMAGE_NAME }}:${{ github.ref_name }}
+
+      # -------------------------------------------------------------
+      # Step 4: Publish to AUR (Arch User Repository)
+      # -------------------------------------------------------------
+      - name: Publish release to AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          # 1. Setup SSH agent and add AUR private key
+          mkdir -p ~/.ssh
+          echo "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+
+          # 2. Clone AUR PKGBUILD repository
+          git clone ssh://aur@aur.archlinux.org/${{ env.AUR_PACKAGE_NAME }}.git /tmp/aur
+          cd /tmp/aur
+
+          # 3. Update PKGBUILD with new version and SHASUMS
+          # Dynamic PKGBUILD updates will be populated here during deployment
+          sed -i "s/pkgver=.*/pkgver=${{ github.ref_name }}/g" PKGBUILD
+          makepkg --printsrcinfo > .SRCINFO
+
+          # 4. Commit and push PKGBUILD changes to AUR git repo
+          git config user.name "Xuepoo Actions"
+          git config user.email "xuepoo@github.actions.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to ${{ github.ref_name }} via CI/CD Release"
+          git push origin master

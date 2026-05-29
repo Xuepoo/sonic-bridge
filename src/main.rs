@@ -15,6 +15,7 @@ fn main() {
 
     let mut config_path = None;
     let mut use_onset = false;
+    let mut use_quiet = false;
     let mut clean_args = Vec::new();
 
     let mut i = 1;
@@ -24,6 +25,9 @@ fn main() {
             i += 2;
         } else if args[i] == "--onset" {
             use_onset = true;
+            i += 1;
+        } else if args[i] == "--quiet" || args[i] == "-q" {
+            use_quiet = true;
             i += 1;
         } else {
             clean_args.push(args[i].clone());
@@ -52,6 +56,9 @@ fn main() {
     // Command-line flag override
     if use_onset {
         config.onset_mode = true;
+    }
+    if use_quiet {
+        config.quiet_mode = true;
     }
 
     if clean_args.len() == 1 {
@@ -122,8 +129,10 @@ fn main() {
                     );
                 }
 
-                println!("\n=== GENERATED LRMD REPORT PREVIEW ===");
-                println!("{}", report_text);
+                if !config.quiet_mode {
+                    println!("\n=== GENERATED LRMD REPORT PREVIEW ===");
+                    println!("{}", report_text);
+                }
             }
             Err(e) => {
                 eprintln!("[-] Error processing audio track: {}", e);
@@ -170,7 +179,7 @@ fn print_usage() {
     println!("SonicBridge CLI - LLM-Readable Acoustic Transformer");
     println!("Usage:");
     println!(
-        "  1. Single track analysis:      cargo run -- <path_to_audio> [--onset] [--config <path>]"
+        "  1. Single track analysis:      cargo run -- <path_to_audio> [--onset] [--quiet] [--config <path>]"
     );
     println!("  2. Comparative version analysis: cargo run -- <path_to_track_A> <path_to_track_B>");
 }

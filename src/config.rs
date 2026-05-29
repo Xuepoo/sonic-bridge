@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(default)]
 pub struct SonicConfig {
     pub step_size: f32,
     pub onset_mode: bool,

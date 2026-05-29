@@ -1,8 +1,8 @@
 # SonicBridge 核心听觉引擎
 
-面向纯文本大模型（LLM）的极速、超轻量、无预训练模型物理音乐审美与听觉转译中间层工具。
+[English](README.en.md) | [简体中文](README.md)
 
-## 🌐 概述
+面向纯文本大模型（LLM）的极速、超轻量、无预训练模型物理音乐审美与听觉转译中间层工具。
 
 **SonicBridge** 旨在弥合硅基大模型的物理听觉鸿沟（Modal Gap）。它是一个使用纯 Rust 编写的、无任何重型神经网络依赖的数字信号处理（DSP）工具。
 
@@ -10,66 +10,79 @@
 
 ---
 
-## 🛠️ 三大核心审美提取方案
+## 🚀 核心特性 (Key Features)
 
-1. **方案 A：参数化自适应步长 (Adaptive Steps)**
-   * 支持通过命令行参数或 `config.toml` 配置自定义时间步长（如每 1.0s 或 0.5s），高频捕捉极速音响变动。
-2. **方案 B：基于光谱通量的 Onset 事件驱动自适应切分 (Onset-Triggered Partitioning)**
-   * 纯数学计算相邻频谱帧的正向能量差（Spectral Flux），在音频发生瞬态爆发（如鼓点切入、滑音转调）的毫秒级瞬间自适应切分，使审美矩阵与音乐心跳完全同步。
-3. **方案 C：拍子同步乐理重采样 (Beat-Synchronous Resampling)**
-   * 基于自相关函数（Autocorrelation）追踪歌曲拍子，以拍（Beat）或小节（Bar）为边界进行特征合并。
+*   **零模型物理级转译**：完全基于经典 DSP 算法（FFT、HPSS、Chroma），编译后体积仅 **5MB** 左右，无需任何 GPU 显存或数百 MB 的预训练神经网络模型，速度比神经网络转译快数万倍，零部署成本。
+*   **三大审美提取方案**：
+    *   **方案 A：参数化自适应步长 (Adaptive Steps)**：支持通过命令行参数或 `config.toml` 配置自定义时间步长，高频追踪音响变动。
+    *   **方案 B：基于光谱通量的 Onset 事件驱动自适应切分 (Onset-Triggered Partitioning)**：通过计算相邻频谱帧的正向能量差（Spectral Flux），在音频发生瞬态爆发（如鼓点切入、人声爆发、滑音转调）的毫秒级瞬间自适应切分，让审美矩阵完美对齐音乐心跳。
+    *   **方案 C：拍子同步乐理重采样 (Beat-Synchronous Resampling)**：基于自相关函数（Autocorrelation）追踪歌曲拍子，以拍（Beat）为边界进行特征合并。
+*   **XDG 规范配置管理**：严格遵循 **XDG Base Directory Specification**，支持三级 Fallback 自愈式 TOML 配置加载与动态缓存，杜绝污染用户根目录。
+*   **双版本演绎比对 (DTW Aligner)**：物理集成动态时间规整（Dynamic Time Warping）双回溯寻优算法，支持在时间轴非线性扭曲（如歌手自由呼吸、渐慢/渐快）的情况下，完美对齐原唱与翻唱，分析速度与音色细节差异。
+*   **Agent 智能同频共听**：无缝对接主播放器 `alx` (agent-lx-music)。通过推送 LRMD 协议格式报告，让大模型在听歌的指定时间点做出极其专业的乐理剖析与情感反馈。
 
 ---
 
-## 🚀 快速开始
+## 🛠️ 快速上手 (Quick Start)
 
-### 1. 编译构建
-由于项目采用纯 Rust 静态链接设计，编译体积仅约 5MB，零外部运行时依赖：
+### 1. 静态编译 (Build from Source)
+项目采用纯 Rust 静态链接设计，无需安装任何复杂的外部 C++ 依赖或重型音频包：
 ```bash
+# 1. 克隆代码仓库
+git clone https://github.com/Xuepoo/sonic-bridge.git
+cd sonic-bridge
+
+# 2. 编译 Release 生产二进制包
 cargo build --release
-```
 
-### 2. 运行测试
-```bash
+# 3. 运行测试套件验证
 cargo test
 ```
+*(编译好的二进制程序 `./target/release/sonic_bridge` 仅约 5MB，可直接运行)*
 
-### 3. 命令行调用
+---
+
+### 2. 命令行调用指南 (CLI Usage)
+
 ```bash
 # 1. 默认 5.0 秒步长审美分析
 ./target/release/sonic_bridge "/path/to/song.mp3"
 
-# 2. 开启方案 B 的 Onset 瞬态事件自适应切分
+# 2. 启用方案 B：基于 Onset 瞬态事件的自适应审美切分（推荐复杂、高速音乐）
 ./target/release/sonic_bridge "/path/to/song.mp3" --onset
 
-# 3. 导入符合 XDG 规范的自定义 TOML 配置文件
-./target/release/sonic_bridge "/path/to/song.mp3" --config "/path/to/config.toml"
+# 3. 导入自定义 TOML 配置文件
+./target/release/sonic_bridge "/path/to/song.mp3" --config "/path/to/my_config.toml"
 
 # 4. 双版本比对（DTW 动态时间规整对齐）
-./target/release/sonic_bridge "/path/to/original.mp3" "/path/to/cover.mp3"
+./target/release/sonic_bridge "/path/to/original.mp3" "/path/to/cover_version.mp3"
 ```
 
 ---
 
-## ⚙️ XDG 规范与配置管理 (config.toml)
+## ⚙️ XDG 配置与参数调优 (Configuration)
 
-本工具严格遵循 **XDG Base Directory Specification** 规范，杜绝污染用户根目录：
-* **配置文件路由**：优先寻检加载 `$XDG_CONFIG_HOME/sonic-bridge/config.toml`（fallback 至 `$HOME/.config/sonic-bridge/config.toml`）。
-* **缓存数据路由**：自动重定向至 `$XDG_CACHE_HOME/sonic-bridge/`，用于存储分析过程的临时高维特征矩阵。
-
-### 配置文件示例 (`config.toml`)
-```toml
-step_size = 2.0
-onset_mode = true
-onset_threshold = 0.15
-cache_dir = "/path/to/cache"
-```
+本工具严格遵循 XDG 规范，优先加载 `$XDG_CONFIG_HOME/sonic-bridge/config.toml`。
+详细的配置字段说明、高级环境变量拦截策略以及针对不同音乐流派的参数调优指南，请参阅专门的：
+👉 **[SonicBridge 配置与集成手册 (docs/configuration.md)](docs/configuration.md)**。
 
 ---
 
-## 🦀 技术栈选型
+## 📦 容器化与生态发布 (Ecosystem)
 
-* **音频解码**：`symphonia` (纯 Rust 编写的多格式极速音频解包解码库)
-* **时频转换**：`rustfft` (支持 SIMD 硬件加速的极速傅里叶变换库)
-* **矩阵计算**：`ndarray` (高性能多维科学计算矩阵库)
-* **序列化**：`serde` & `serde_json` & `toml`
+*   **Docker 镜像**：预置了多阶段构建的 [Dockerfile](Dockerfile)，可快速生成基于 Alpine Linux 的极简生产镜像：
+    ```bash
+    docker pull xuepoo/sonic-bridge:latest
+    ```
+*   **Crates.io**：
+    ```toml
+    [dependencies]
+    sonic-bridge = "0.1.0"
+    ```
+*   **GitHub Actions CI/CD**：内置了完善的自动化流程，在发布版本 Tag 时（如 `v0.1.0`）会自动构建多架构镜像并分发至 Dockerhub、crates.io 与 AUR。
+
+---
+
+## ⚖️ 开源协议 (License)
+
+本项目基于 [MIT License](LICENSE) 协议开源。欢迎开发者贡献代码、提出 Issue 与 Pull Request。

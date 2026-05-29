@@ -1,8 +1,8 @@
 # SonicBridge Core Audio Engine
 
-An ultra-fast, lightweight, zero-pretrain-model physical music aesthetic & listening translation middleware designed for pure-text Large Language Models (LLMs).
+[English](README.en.md) | [简体中文](README.md)
 
-## 🌐 Overview
+An ultra-fast, lightweight, zero-pretrain-model physical music aesthetic & listening translation middleware designed for pure-text Large Language Models (LLMs).
 
 **SonicBridge** bridges the physical listening gap (Modal Gap) for AI Agents. It is a digital signal processing (DSP) tool written entirely in Rust, with no heavy machine learning dependencies.
 
@@ -10,31 +10,40 @@ Leveraging high-performance audio decoding, short-time Fourier transform (STFT),
 
 ---
 
-## 🛠️ Three Adaptive Aesthetic Extraction Strategies
+## 🚀 Key Features
 
-1. **Approach A: Parameterized Adaptive Steps**
-   * Customize temporal analysis windows (e.g. 1.0s or 0.5s) via CLI or `config.toml` to capture rapid melodic runs.
-2. **Approach B: Spectral Flux Onset-Triggered Partitioning**
-   * Compute consecutive spectral frames positive energy flux (Spectral Flux) to dynamically slice acoustic boundaries right at transient attacks (drum entries, glissandos).
-3. **Approach C: Beat-Synchronous Resampling**
-   * Estimate beat intervals using Autocorrelation functions, merging acoustic descriptors by musical beats or bars.
+*   **Zero-Model Translation**: Built entirely on classic DSP algorithms (FFT, HPSS, Chroma), yielding a statically compiled binary of only **~5MB** with zero heavy GPU or neural network runtime dependencies.
+*   **Three Aesthetic Slicing Strategies**:
+    *   **Approach A: Parameterized Adaptive Steps**: Customize temporal analysis windows via CLI or `config.toml` to track melodic changes.
+    *   **Approach B: Spectral Flux Onset-Triggered Partitioning**: Compute consecutive spectral frames positive energy flux to dynamically slice acoustic boundaries right at transient attacks (drum entries, glissandos).
+    *   **Approach C: Beat-Synchronous Resampling**: Estimate beat intervals using Autocorrelation functions, merging acoustic descriptors by musical beats.
+*   **XDG Specification Compliance**: Fully complies with **XDG Base Directory Specifications** supporting self-healing TOML configuration directories.
+*   **Cross-Version DTW Alignment**: Employs Dynamic Time Warping dual-backtracking pathfinding, enabling robust temporal alignment of Covers and Originals under non-linear tempo changes.
+*   **AI Agent Co-Listening Co-Intelligence**: Designed to seamlessly interface with `alx` (agent-lx-music). By generating standard `.lrmd.md` reports, text-only LLMs get full通感 to act as real-time musicological companions.
 
 ---
 
-## 🚀 Quick Start
+## 🛠️ Quick Start
 
-### 1. Build
-Statically linked, generating a single **~5MB** binary without any external runtime dependencies:
+### 1. Build from Source
+Statically linked, generating a single, self-contained binary without any external runtime dependencies:
 ```bash
+# 1. Clone Repository
+git clone https://github.com/Xuepoo/sonic-bridge.git
+cd sonic-bridge
+
+# 2. Compile Release Binary
 cargo build --release
-```
 
-### 2. Run Tests
-```bash
+# 3. Run Tests
 cargo test
 ```
+*(The compiled executable `./target/release/sonic_bridge` is roughly 5MB)*
 
-### 3. CLI Usage
+---
+
+### 2. CLI Usage Guide
+
 ```bash
 # 1. Default 5.0-second interval analysis
 ./target/release/sonic_bridge "/path/to/song.mp3"
@@ -42,34 +51,38 @@ cargo test
 # 2. Enable Approach B: Event-Driven Onset Adaptive Segmentation
 ./target/release/sonic_bridge "/path/to/song.mp3" --onset
 
-# 3. Load custom TOML config complying with XDG
-./target/release/sonic_bridge "/path/to/song.mp3" --config "/path/to/config.toml"
+# 3. Load custom TOML config
+./target/release/sonic_bridge "/path/to/song.mp3" --config "/path/to/my_config.toml"
 
 # 4. Cross-Version Comparative Analysis (DTW Warp)
-./target/release/sonic_bridge "/path/to/original.mp3" "/path/to/cover.mp3"
+./target/release/sonic_bridge "/path/to/original.mp3" "/path/to/cover_version.mp3"
 ```
 
 ---
 
-## ⚙️ XDG & TOML Configuration (config.toml)
+## ⚙️ XDG & Parameter Tuning (Configuration)
 
-Strictly complies with the **XDG Base Directory Specification**:
-* **Config Directory**: Resolves `$XDG_CONFIG_HOME/sonic-bridge/config.toml` (fallback to `$HOME/.config/sonic-bridge/config.toml`).
-* **Cache Directory**: Resolves `$XDG_CACHE_HOME/sonic-bridge/` for storing dynamic spectral matrices.
-
-### Config Example (`config.toml`)
-```toml
-step_size = 2.0
-onset_mode = true
-onset_threshold = 0.15
-cache_dir = "/path/to/cache"
-```
+Prioritizes loading `$XDG_CONFIG_HOME/sonic-bridge/config.toml`.
+For detailed field explanations, XDG environment interceptions, and musical style tuning metrics, please refer to:
+👉 **[SonicConfig User & Configuration Guide (docs/configuration.md)](docs/configuration.md)**.
 
 ---
 
-## 🦀 Tech Stack Specs
+## 📦 Containerization & Deployment
 
-* **Audio Decoding**: `symphonia` (pure-Rust, zero ffpmeg dependency)
-* **Spectral Transform**: `rustfft` (SIMD hardware-accelerated FFT)
-* **Matrix Calculation**: `ndarray` (multidimensional scientific array)
-* **Serialization**: `serde` & `serde_json` & `toml`
+*   **Docker Registry**: Uses a multi-stage [Dockerfile](Dockerfile) to compile a minimal runtime container based on Alpine Linux:
+    ```bash
+    docker pull xuepoo/sonic-bridge:latest
+    ```
+*   **Crates.io**:
+    ```toml
+    [dependencies]
+    sonic-bridge = "0.1.0"
+    ```
+*   **GitHub Actions CI/CD**: Automatically builds multi-platform binaries, publishing to Dockerhub, crates.io, and AUR upon version tags (e.g. `v0.1.0`).
+
+---
+
+## ⚖️ License
+
+Stably licensed under the [MIT License](LICENSE). Contributions, issues, and Pull Requests are welcome!

@@ -1,4 +1,4 @@
-use sonic_bridge_core::config::{get_xdg_config_path, SonicConfig};
+use sonic_bridge::config::{get_xdg_config_path, SonicConfig};
 
 #[test]
 fn test_xdg_path_resolver_and_default_loading() {

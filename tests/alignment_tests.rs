@@ -1,4 +1,4 @@
-use sonic_bridge_core::alignment::dtw::DtwAligner;
+use sonic_bridge::alignment::dtw::DtwAligner;
 
 #[test]
 fn test_dtw_alignment() {

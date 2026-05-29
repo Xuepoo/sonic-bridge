@@ -1,4 +1,4 @@
-use sonic_bridge_core::musicology::chroma::ChordClassifier;
+use sonic_bridge::musicology::chroma::ChordClassifier;
 
 #[test]
 fn test_chord_classification_c_major() {

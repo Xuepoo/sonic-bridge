@@ -30,7 +30,7 @@
 ### 1. 从 Crates.io 安装 (Rust 生态)
 如果您本地配置了 Rust 环境，可直接通过 `cargo` 编译并自动加入系统路径：
 ```bash
-cargo install sonic-bridge-core
+cargo install sonic-bridge
 ```
 
 ### 2. 使用 AUR 安装 (Arch Linux 用户)
@@ -108,7 +108,7 @@ sonic-bridge "/path/to/original.mp3" "/path/to/cover_version.mp3"
 *   **Crates.io**：
     ```toml
     [dependencies]
-    sonic-bridge-core = "0.1"
+    sonic-bridge = "0.1"
     ```
 *   **GitHub Actions CI/CD**：内置了完善的自动化流程，在发布版本 Tag 时（如 `v0.1.0`）会自动构建多架构镜像并分发至 Dockerhub、crates.io 与 AUR。
 

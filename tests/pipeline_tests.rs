@@ -1,5 +1,5 @@
-use sonic_bridge_core::config::SonicConfig;
-use sonic_bridge_core::pipeline::SonicPipeline;
+use sonic_bridge::config::SonicConfig;
+use sonic_bridge::pipeline::SonicPipeline;
 use std::fs;
 use std::path::Path;
 

@@ -1,4 +1,4 @@
-use sonic_bridge_core::dsp::onset::OnsetDetector;
+use sonic_bridge::dsp::onset::OnsetDetector;
 
 #[test]
 fn test_onset_triggered_segmentation() {

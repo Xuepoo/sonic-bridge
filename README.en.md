@@ -30,7 +30,7 @@ SonicBridge provides multiple out-of-the-box installation strategies. Select the
 ### 1. Build via Cargo (Rust Ecosystem)
 If you have a Rust toolchain configured locally, compile and install it globally via `cargo`:
 ```bash
-cargo install sonic-bridge-core
+cargo install sonic-bridge
 ```
 
 ### 2. Install from AUR (Arch Linux & Manjaro Users)
@@ -108,7 +108,7 @@ For detailed field explanations, XDG environment interceptions, and musical styl
 *   **Crates.io**:
     ```toml
     [dependencies]
-    sonic-bridge-core = "0.1"
+    sonic-bridge = "0.1"
     ```
 *   **GitHub Actions CI/CD**: Automatically builds multi-platform binaries, publishing to Dockerhub, crates.io, and AUR upon version tags (e.g. `v0.1.0`).
 

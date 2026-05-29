@@ -1,4 +1,4 @@
-use sonic_bridge_core::dsp::spectrogram::StftEngine;
+use sonic_bridge::dsp::spectrogram::StftEngine;
 
 #[test]
 fn test_stft_processing() {

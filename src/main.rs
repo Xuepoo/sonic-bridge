@@ -32,6 +32,7 @@ fn main() {
     let mut config_path = None;
     let mut use_onset = false;
     let mut use_quiet = false;
+    let mut use_render = false;
     let mut clean_args = Vec::new();
 
     let mut i = 1;
@@ -52,6 +53,9 @@ fn main() {
             i += 1;
         } else if args[i] == "--quiet" || args[i] == "-q" {
             use_quiet = true;
+            i += 1;
+        } else if args[i] == "--render" {
+            use_render = true;
             i += 1;
         } else if args[i].starts_with('-') && !Path::new(&args[i]).exists() {
             eprintln!(
@@ -103,6 +107,26 @@ fn main() {
                 audio_path.display()
             );
             std::process::exit(1);
+        }
+
+        // Appreciation live scrolling mode
+        if use_render {
+            let alrc_path = audio_path.with_extension("alrc");
+            if !alrc_path.exists() {
+                eprintln!(
+                    "\x1b[1;31m[-] Error:\x1b[0m Aesthetic Lyrics file (.alrc) not found: \x1b[33m{}\x1b[0m\nPlease compile the .alrc file via sonic-bridge-mcp first.",
+                    alrc_path.display()
+                );
+                std::process::exit(1);
+            }
+            if let Err(e) = sonic_bridge::renderer::run_live_render(&alrc_path) {
+                eprintln!(
+                    "\x1b[1;31m[-] Error running terminal renderer:\x1b[0m {}",
+                    e
+                );
+                std::process::exit(1);
+            }
+            return;
         }
 
         let is_onset_active = config.onset_mode;
@@ -270,6 +294,10 @@ fn print_usage() {
     println!("                   (Defaults to fixed step time segmenting if omitted)");
     println!("  \x1b[32m--quiet, -q\x1b[0m      Mute outputting markdown report preview in standard stdout");
     println!("  \x1b[32m--config <path>\x1b[0m  Specify target TOML config file path (Override default XDG paths)");
+    println!(
+        "  \x1b[32m--render\x1b[0m         Start dynamic real-time terminal appreciation scrolling"
+    );
+    println!("                   (Requires a matching .alrc file under the same directory)");
     println!("  \x1b[32m-h, --help\x1b[0m       Show this premium help manual");
     println!("  \x1b[32m-v, --version\x1b[0m    Show current version info");
     println!();

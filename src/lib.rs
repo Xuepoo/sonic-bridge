@@ -4,3 +4,4 @@ pub mod decoder;
 pub mod dsp;
 pub mod musicology;
 pub mod pipeline;
+pub mod renderer;

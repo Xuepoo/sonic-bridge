@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "sonic-bridge"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "ndarray",
  "rustfft",

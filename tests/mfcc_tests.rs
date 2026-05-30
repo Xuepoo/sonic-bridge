@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop)]
+
 use sonic_bridge::dsp::mfcc::MfccEngine;
 
 #[test]

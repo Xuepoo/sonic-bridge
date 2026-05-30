@@ -179,7 +179,7 @@ fn print_usage() {
     println!("SonicBridge CLI - LLM-Readable Acoustic Transformer");
     println!("Usage:");
     println!(
-        "  1. Single track analysis:      cargo run -- <path_to_audio> [--onset] [--quiet] [--config <path>]"
+        "  1. Single track analysis:      sonic-bridge <path_to_audio> [--onset] [--quiet] [--config <path>]"
     );
-    println!("  2. Comparative version analysis: cargo run -- <path_to_track_A> <path_to_track_B>");
+    println!("  2. Comparative version analysis: sonic-bridge <path_to_track_A> <path_to_track_B>");
 }

@@ -215,3 +215,147 @@ jobs:
           git add PKGBUILD .SRCINFO
           git commit -m "Update to v${CLEAN_VERSION}" || true
           git push -f origin master
+
+  publish-homebrew:
+    name: Publish to Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          VERSION="${{ github.ref_name }}"
+          CLEAN_VERSION=${VERSION#v}
+          echo "version=${CLEAN_VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Wait for release to be fully propagated to prevent download failures during formula test
+          sleep 15
+
+          # Read sha256 of binaries
+          SHA_LINUX=$(sha256sum artifacts/sonic-bridge-linux-x86_64/sonic-bridge-linux-x86_64 | awk '{print $1}')
+          SHA_MACOS_X86=$(sha256sum artifacts/sonic-bridge-macos-x86_64/sonic-bridge-macos-x86_64 | awk '{print $1}')
+          SHA_MACOS_ARM=$(sha256sum artifacts/sonic-bridge-macos-aarch64/sonic-bridge-macos-aarch64 | awk '{print $1}')
+
+          echo "sha_linux=${SHA_LINUX}" >> "$GITHUB_OUTPUT"
+          echo "sha_macos_x86=${SHA_MACOS_X86}" >> "$GITHUB_OUTPUT"
+          echo "sha_macos_arm=${SHA_MACOS_ARM}" >> "$GITHUB_OUTPUT"
+
+      - name: Update Formula
+        run: |
+          VERSION="${{ steps.sha.outputs.version }}"
+          REPO_URL="https://x-access-token:${{ secrets.GH_PAT }}@github.com/Xuepoo/homebrew-tap.git"
+
+          git clone "${REPO_URL}" tap
+          cd tap
+          mkdir -p Formula
+
+          cat > Formula/sonic-bridge.rb << 'FORMULA'
+          class SonicBridge < Formula
+            desc "An ultra-fast, lightweight physical music aesthetic and listening translation middleware designed for AI Agents"
+            homepage "https://github.com/Xuepoo/sonic-bridge"
+            version "VERSION_PLACEHOLDER"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/Xuepoo/sonic-bridge/releases/download/vVERSION_PLACEHOLDER/sonic-bridge-macos-aarch64"
+                sha256 "SHA_MACOS_ARM_PLACEHOLDER"
+              else
+                url "https://github.com/Xuepoo/sonic-bridge/releases/download/vVERSION_PLACEHOLDER/sonic-bridge-macos-x86_64"
+                sha256 "SHA_MACOS_X86_PLACEHOLDER"
+              end
+            end
+
+            on_linux do
+              url "https://github.com/Xuepoo/sonic-bridge/releases/download/vVERSION_PLACEHOLDER/sonic-bridge-linux-x86_64"
+              sha256 "SHA_LINUX_PLACEHOLDER"
+            end
+
+            def install
+              if OS.mac?
+                if Hardware::CPU.arm?
+                  bin.install "sonic-bridge-macos-aarch64" => "sonic-bridge"
+                else
+                  bin.install "sonic-bridge-macos-x86_64" => "sonic-bridge"
+                end
+              elsif OS.linux?
+                bin.install "sonic-bridge-linux-x86_64" => "sonic-bridge"
+              end
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/sonic-bridge --version")
+            end
+          end
+          FORMULA
+
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" Formula/sonic-bridge.rb
+          sed -i "s/SHA_MACOS_ARM_PLACEHOLDER/${{ steps.sha.outputs.sha_macos_arm }}/g" Formula/sonic-bridge.rb
+          sed -i "s/SHA_MACOS_X86_PLACEHOLDER/${{ steps.sha.outputs.sha_macos_x86 }}/g" Formula/sonic-bridge.rb
+          sed -i "s/SHA_LINUX_PLACEHOLDER/${{ steps.sha.outputs.sha_linux }}/g" Formula/sonic-bridge.rb
+
+          git config user.name "Xuepoo (CI)"
+          git config user.email "xuepoofoter@gmail.com"
+          git add Formula/sonic-bridge.rb
+          git commit -m "chore: update sonic-bridge to v${VERSION}" || true
+          git push
+
+  publish-scoop:
+    name: Publish to Scoop Bucket
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Calculate SHA256 and Update
+        run: |
+          VERSION="${{ github.ref_name }}"
+          CLEAN_VERSION=${VERSION#v}
+          SHA_WIN=$(sha256sum artifacts/sonic-bridge-windows-x86_64/sonic-bridge-windows-x86_64.exe | awk '{print $1}')
+
+          REPO_URL="https://x-access-token:${{ secrets.GH_PAT }}@github.com/Xuepoo/scoop-bucket.git"
+          git clone "${REPO_URL}" bucket
+          cd bucket
+          mkdir -p bucket
+
+          cat > bucket/sonic-bridge.json << EOF
+          {
+            "version": "${CLEAN_VERSION}",
+            "description": "An ultra-fast, lightweight physical music aesthetic and listening translation middleware designed for AI Agents",
+            "homepage": "https://github.com/Xuepoo/sonic-bridge",
+            "license": "MIT",
+            "architecture": {
+              "64bit": {
+                "url": "https://github.com/Xuepoo/sonic-bridge/releases/download/v${CLEAN_VERSION}/sonic-bridge-windows-x86_64.exe",
+                "hash": "${SHA_WIN}",
+                "bin": [["sonic-bridge-windows-x86_64.exe", "sonic-bridge"]]
+              }
+            },
+            "checkver": {
+              "github": "https://github.com/Xuepoo/sonic-bridge"
+            },
+            "autoupdate": {
+              "architecture": {
+                "64bit": {
+                  "url": "https://github.com/Xuepoo/sonic-bridge/releases/download/v\$version/sonic-bridge-windows-x86_64.exe"
+                }
+              }
+            }
+          }
+          EOF
+
+          git config user.name "Xuepoo (CI)"
+          git config user.email "xuepoofoter@gmail.com"
+          git add bucket/sonic-bridge.json
+          git commit -m "chore: update sonic-bridge to v${CLEAN_VERSION}" || true
+          git push

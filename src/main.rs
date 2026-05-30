@@ -8,6 +8,22 @@ use std::path::Path;
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    // Global interception for help/version flags before any heavy parsing
+    if args
+        .iter()
+        .any(|arg| arg == "-h" || arg == "--help" || arg == "help")
+    {
+        print_usage();
+        return;
+    }
+    if args
+        .iter()
+        .any(|arg| arg == "-v" || arg == "--version" || arg == "version")
+    {
+        print_version();
+        return;
+    }
+
     if args.len() < 2 {
         print_usage();
         return;
@@ -20,15 +36,30 @@ fn main() {
 
     let mut i = 1;
     while i < args.len() {
-        if args[i] == "--config" && i + 1 < args.len() {
-            config_path = Some(args[i + 1].clone());
-            i += 2;
+        if args[i] == "--config" {
+            if i + 1 < args.len() {
+                config_path = Some(args[i + 1].clone());
+                i += 2;
+            } else {
+                eprintln!(
+                    "\x1b[1;31m[-] Error:\x1b[0m --config option requires a valid file path value."
+                );
+                print_usage();
+                std::process::exit(1);
+            }
         } else if args[i] == "--onset" {
             use_onset = true;
             i += 1;
         } else if args[i] == "--quiet" || args[i] == "-q" {
             use_quiet = true;
             i += 1;
+        } else if args[i].starts_with('-') && !Path::new(&args[i]).exists() {
+            eprintln!(
+                "\x1b[1;31m[-] Error:\x1b[0m Unknown option: \x1b[33m{}\x1b[0m",
+                args[i]
+            );
+            print_usage();
+            std::process::exit(1);
         } else {
             clean_args.push(args[i].clone());
             i += 1;
@@ -44,7 +75,7 @@ fn main() {
     let mut config = if let Some(ref path_str) = config_path {
         SonicConfig::load_from_file(Path::new(path_str)).unwrap_or_else(|e| {
             eprintln!(
-                "[!] Warning: Failed to load config from {}: {}. Falling back to default.",
+                "\x1b[1;33m[!] Warning:\x1b[0m Failed to load config from {}: {}. Falling back to default.",
                 path_str, e
             );
             SonicConfig::default()
@@ -64,9 +95,19 @@ fn main() {
     if clean_args.len() == 1 {
         // 单音轨审美分析模式
         let audio_path = Path::new(&clean_args[0]);
+
+        // Physical existence check
+        if !audio_path.exists() {
+            eprintln!(
+                "\x1b[1;31m[-] Error:\x1b[0m Audio file does not exist: \x1b[33m{}\x1b[0m",
+                audio_path.display()
+            );
+            std::process::exit(1);
+        }
+
         let is_onset_active = config.onset_mode;
         println!(
-            "[*] Analyzing single track: {} (onset mode: {}, step size: {:.1}s) ...",
+            "\x1b[1;36m[*]\x1b[0m Analyzing single track: \x1b[1m{}\x1b[0m (onset mode: \x1b[32m{}\x1b[0m, step size: \x1b[32m{:.1}s\x1b[0m) ...",
             audio_path.display(),
             is_onset_active,
             config.step_size
@@ -124,7 +165,7 @@ fn main() {
                 if let Ok(mut file) = File::create(&out_path) {
                     let _ = file.write_all(report_text.as_bytes());
                     println!(
-                        "[+] LRMD report successfully generated and saved to: {}",
+                        "\x1b[1;32m[+]\x1b[0m LRMD report successfully generated and saved to: \x1b[34m{}\x1b[0m",
                         out_path
                     );
                 }
@@ -135,15 +176,35 @@ fn main() {
                 }
             }
             Err(e) => {
-                eprintln!("[-] Error processing audio track: {}", e);
+                eprintln!("\x1b[1;31m[-] Error processing audio track:\x1b[0m {}", e);
             }
         }
     } else if clean_args.len() == 2 {
         // 双音轨比对模式
         let path_a = Path::new(&clean_args[0]);
         let path_b = Path::new(&clean_args[1]);
+
+        let mut has_err = false;
+        if !path_a.exists() {
+            eprintln!(
+                "\x1b[1;31m[-] Error:\x1b[0m Audio Track A does not exist: \x1b[33m{}\x1b[0m",
+                path_a.display()
+            );
+            has_err = true;
+        }
+        if !path_b.exists() {
+            eprintln!(
+                "\x1b[1;31m[-] Error:\x1b[0m Audio Track B does not exist: \x1b[33m{}\x1b[0m",
+                path_b.display()
+            );
+            has_err = true;
+        }
+        if has_err {
+            std::process::exit(1);
+        }
+
         println!(
-            "[*] Running DTW Comparative Analysis:\n  - Track A: {}\n  - Track B: {}",
+            "\x1b[1;36m[*]\x1b[0m Running DTW Comparative Analysis:\n  - Track A: \x1b[1m{}\x1b[0m\n  - Track B: \x1b[1m{}\x1b[0m",
             path_a.display(),
             path_b.display()
         );
@@ -158,7 +219,7 @@ fn main() {
                 if let Ok(mut file) = File::create(&out_path) {
                     let _ = file.write_all(report_text.as_bytes());
                     println!(
-                        "[+] Comparative LRMD report generated and saved to: {}",
+                        "\x1b[1;32m[+]\x1b[0m Comparative LRMD report generated and saved to: \x1b[34m{}\x1b[0m",
                         out_path
                     );
                 }
@@ -167,7 +228,10 @@ fn main() {
                 println!("{}", report_text);
             }
             Err(e) => {
-                eprintln!("[-] Error running comparative alignment: {}", e);
+                eprintln!(
+                    "\x1b[1;31m[-] Error running comparative alignment:\x1b[0m {}",
+                    e
+                );
             }
         }
     } else {
@@ -176,10 +240,44 @@ fn main() {
 }
 
 fn print_usage() {
-    println!("SonicBridge CLI - LLM-Readable Acoustic Transformer");
-    println!("Usage:");
+    println!("\x1b[1;36m      ____              _      ____        _     _             \x1b[0m");
+    println!("\x1b[1;36m     / ___|  ___  _ __ (_) ___| __ ) _ __ (_) __| | __ _  ___  \x1b[0m");
     println!(
-        "  1. Single track analysis:      sonic-bridge <path_to_audio> [--onset] [--quiet] [--config <path>]"
+        "\x1b[1;36m     \\___ \\ / _ \\| '_ \\| |/ __|  _ \\| '__|| |/ _` |/ _` |/ _ \\ \x1b[0m"
     );
-    println!("  2. Comparative version analysis: sonic-bridge <path_to_track_A> <path_to_track_B>");
+    println!("\x1b[1;36m      ___) | (_) | | | | | (__| |_) | |   | | (_| | (_| |  __/ \x1b[0m");
+    println!(
+        "\x1b[1;36m     |____/ \\___/|_| |_|_|\\___|____/|_|   |_|\\__,_|\\__, |\\___| \x1b[0m"
+    );
+    println!("\x1b[1;36m                                                   |___/       \x1b[0m");
+    println!();
+    println!(
+        "\x1b[1;32mSonicBridge CLI\x1b[0m - LLM-Readable Acoustic Transformer (\x1b[33mv{}\x1b[0m)",
+        env!("CARGO_PKG_VERSION")
+    );
+    println!("\x1b[90m====================================================================\x1b[0m");
+    println!("An ultra-fast physical-to-semantic music aesthetic encoder.");
+    println!();
+    println!("\x1b[1;33mUSAGE:\x1b[0m");
+    println!("  \x1b[1mSingle Track Analysis (Generate LRMD Report):\x1b[0m");
+    println!("    sonic-bridge \x1b[32m<path_to_audio>\x1b[0m [options]");
+    println!();
+    println!("  \x1b[1mComparative Track Alignment (DTW Cross-Matching):\x1b[0m");
+    println!("    sonic-bridge \x1b[32m<track_A>\x1b[0m \x1b[32m<track_B>\x1b[0m");
+    println!();
+    println!("\x1b[1;33mOPTIONS:\x1b[0m");
+    println!("  \x1b[32m--onset\x1b[0m          Enable event-driven adaptive interval segmenting (Onset detection)");
+    println!("                   (Defaults to fixed step time segmenting if omitted)");
+    println!("  \x1b[32m--quiet, -q\x1b[0m      Mute outputting markdown report preview in standard stdout");
+    println!("  \x1b[32m--config <path>\x1b[0m  Specify target TOML config file path (Override default XDG paths)");
+    println!("  \x1b[32m-h, --help\x1b[0m       Show this premium help manual");
+    println!("  \x1b[32m-v, --version\x1b[0m    Show current version info");
+    println!();
+    println!("\x1b[1;33mENVIRONMENT:\x1b[0m");
+    println!("  Configuration paths comply with XDG specs (\x1b[34m$XDG_CONFIG_HOME/sonic-bridge/\x1b[0m).");
+    println!();
+}
+
+fn print_version() {
+    println!("sonic-bridge version {}", env!("CARGO_PKG_VERSION"));
 }

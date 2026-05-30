@@ -15,7 +15,7 @@ COPY . .
 RUN cargo build --release
 
 # --- Stage 2: Minimal runtime image ---
-FROM alpine:3.19
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates
 

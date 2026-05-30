@@ -1,12 +1,11 @@
 use std::fs::File;
 use std::path::Path;
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 pub struct AudioDecoder {
     path: String,
@@ -39,58 +38,57 @@ impl AudioDecoder {
         let meta_opts: MetadataOptions = Default::default();
         let fmt_opts: FormatOptions = Default::default();
 
-        let mut probed = symphonia::default::get_probe()
-            .format(&hint, mss, &fmt_opts, &meta_opts)
+        let mut format = symphonia::default::get_probe()
+            .probe(&hint, mss, fmt_opts, meta_opts)
             .map_err(|e| e.to_string())?;
 
-        let track = probed
-            .format
-            .tracks()
-            .first()
+        let track = format
+            .default_track(TrackType::Audio)
             .ok_or("No supported audio track found")?;
 
         let track_id = track.id;
 
-        let src_sample_rate = track
+        let audio_params = track
             .codec_params
+            .as_ref()
+            .and_then(|p| p.audio().ok())
+            .ok_or("No audio codec parameters")?;
+
+        let src_sample_rate = audio_params
             .sample_rate
             .ok_or("Unknown sample rate")?;
 
-        let dec_opts: DecoderOptions = Default::default();
+        let dec_opts: AudioDecoderOptions = Default::default();
         let mut decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &dec_opts)
+            .make_audio_decoder(audio_params, &dec_opts)
             .map_err(|e| e.to_string())?;
 
-        let mut raw_samples = Vec::new();
+        let mut raw_samples: Vec<f32> = Vec::new();
 
-        loop {
-            let packet = match probed.format.next_packet() {
-                Ok(packet) => packet,
-                Err(Error::IoError(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    break
-                }
-                Err(e) => return Err(e.to_string()),
-            };
-
-            if packet.track_id() != track_id {
+        while let Some(packet) = format.next_packet().map_err(|e| e.to_string())? {
+            if packet.track_id != track_id {
                 continue;
             }
 
-            let decoded = decoder.decode(&packet).map_err(|e| e.to_string())?;
+            match decoder.decode(&packet) {
+                Ok(decoded) => {
+                    let num_channels = decoded.spec().channels().count();
+                    let mut interleaved: Vec<f32> = Default::default();
+                    decoded.copy_to_vec_interleaved(&mut interleaved);
 
-            let num_channels = decoded.spec().channels.count();
-            let mut sample_buf =
-                SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
-            sample_buf.copy_interleaved_ref(decoded);
-            let interleaved_samples = sample_buf.samples();
-
-            if num_channels == 1 {
-                raw_samples.extend_from_slice(interleaved_samples);
-            } else if num_channels > 1 {
-                for frame in interleaved_samples.chunks_exact(num_channels) {
-                    let sum: f32 = frame.iter().sum();
-                    raw_samples.push(sum / num_channels as f32);
+                    if num_channels == 1 {
+                        raw_samples.extend_from_slice(&interleaved);
+                    } else if num_channels > 1 {
+                        for frame in interleaved.chunks_exact(num_channels) {
+                            let sum: f32 = frame.iter().sum();
+                            raw_samples.push(sum / num_channels as f32);
+                        }
+                    }
                 }
+                Err(Error::IoError(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    break;
+                }
+                Err(e) => return Err(e.to_string()),
             }
         }
 

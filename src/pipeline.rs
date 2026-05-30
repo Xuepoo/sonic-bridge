@@ -257,7 +257,27 @@ impl SonicPipeline {
         Ok((global_metadata, merged_segments))
     }
 
-    /// Spatiotemporal Chunk Merger: compresses consecutive slices sharing identical Chord, Timbre, and Dynamic features into Phrase Blocks
+    /// Extracts the fundamental root pitch class from a complex chord symbol (e.g. "A#maj7" -> "A#", "Dm7" -> "D")
+    fn get_chord_root(chord: &str) -> &str {
+        if chord == "Silent" || chord == "Unknown" {
+            return chord;
+        }
+        if chord.len() >= 2 {
+            let bytes = chord.as_bytes();
+            if (bytes[0] >= b'A' && bytes[0] <= b'G') && (bytes[1] == b'#' || bytes[1] == b'b') {
+                return &chord[0..2];
+            }
+        }
+        if !chord.is_empty() {
+            let bytes = chord.as_bytes();
+            if bytes[0] >= b'A' && bytes[0] <= b'G' {
+                return &chord[0..1];
+            }
+        }
+        chord
+    }
+
+    /// Spatiotemporal Chunk Merger: compresses consecutive slices sharing identical Chord Root, Timbre, and Dynamic features into Phrase Blocks
     fn merge_segments(segs: Vec<SegmentAesthetic>) -> Vec<SegmentAesthetic> {
         if segs.is_empty() {
             return segs;
@@ -267,7 +287,7 @@ impl SonicPipeline {
         let mut current = segs[0].clone();
 
         for next_seg in segs.into_iter().skip(1) {
-            if current.chord == next_seg.chord
+            if Self::get_chord_root(&current.chord) == Self::get_chord_root(&next_seg.chord)
                 && current.dynamic_level == next_seg.dynamic_level
                 && current.timbre_brightness == next_seg.timbre_brightness
                 && current.rhythm_activity == next_seg.rhythm_activity

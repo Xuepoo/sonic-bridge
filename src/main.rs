@@ -130,12 +130,14 @@ fn main() {
         }
 
         let is_onset_active = config.onset_mode;
-        println!(
-            "\x1b[1;36m[*]\x1b[0m Analyzing single track: \x1b[1m{}\x1b[0m (onset mode: \x1b[32m{}\x1b[0m, step size: \x1b[32m{:.1}s\x1b[0m) ...",
-            audio_path.display(),
-            is_onset_active,
-            config.step_size
-        );
+        if !config.quiet_mode {
+            println!(
+                "\x1b[1;36m[*]\x1b[0m Analyzing single track: \x1b[1m{}\x1b[0m (onset mode: \x1b[32m{}\x1b[0m, step size: \x1b[32m{:.1}s\x1b[0m) ...",
+                audio_path.display(),
+                is_onset_active,
+                config.step_size
+            );
+        }
 
         match SonicPipeline::process_single(audio_path, &config) {
             Ok((meta, segs)) => {
@@ -188,10 +190,12 @@ fn main() {
                 let out_path = format!("{}.lrmd.md", clean_args[0]);
                 if let Ok(mut file) = File::create(&out_path) {
                     let _ = file.write_all(report_text.as_bytes());
-                    println!(
-                        "\x1b[1;32m[+]\x1b[0m LRMD report successfully generated and saved to: \x1b[34m{}\x1b[0m",
-                        out_path
-                    );
+                    if !config.quiet_mode {
+                        println!(
+                            "\x1b[1;32m[+]\x1b[0m LRMD report successfully generated and saved to: \x1b[34m{}\x1b[0m",
+                            out_path
+                        );
+                    }
                 }
 
                 if !config.quiet_mode {
@@ -227,11 +231,13 @@ fn main() {
             std::process::exit(1);
         }
 
-        println!(
-            "\x1b[1;36m[*]\x1b[0m Running DTW Comparative Analysis:\n  - Track A: \x1b[1m{}\x1b[0m\n  - Track B: \x1b[1m{}\x1b[0m",
-            path_a.display(),
-            path_b.display()
-        );
+        if !config.quiet_mode {
+            println!(
+                "\x1b[1;36m[*]\x1b[0m Running DTW Comparative Analysis:\n  - Track A: \x1b[1m{}\x1b[0m\n  - Track B: \x1b[1m{}\x1b[0m",
+                path_a.display(),
+                path_b.display()
+            );
+        }
 
         match SonicPipeline::process_comparative(path_a, path_b) {
             Ok(report_text) => {
@@ -242,14 +248,18 @@ fn main() {
                 );
                 if let Ok(mut file) = File::create(&out_path) {
                     let _ = file.write_all(report_text.as_bytes());
-                    println!(
-                        "\x1b[1;32m[+]\x1b[0m Comparative LRMD report generated and saved to: \x1b[34m{}\x1b[0m",
-                        out_path
-                    );
+                    if !config.quiet_mode {
+                        println!(
+                            "\x1b[1;32m[+]\x1b[0m Comparative LRMD report generated and saved to: \x1b[34m{}\x1b[0m",
+                            out_path
+                        );
+                    }
                 }
 
-                println!("\n=== COMPARATIVE REPORT PREVIEW ===");
-                println!("{}", report_text);
+                if !config.quiet_mode {
+                    println!("\n=== COMPARATIVE REPORT PREVIEW ===");
+                    println!("{}", report_text);
+                }
             }
             Err(e) => {
                 eprintln!(

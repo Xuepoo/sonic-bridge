@@ -4,6 +4,20 @@ All notable changes to the `sonic-bridge` core library and CLI will be documente
 
 ---
 
+## [0.4.1] - 2026-05-31
+
+### Added
+- **Chinese Pentatonic Modes (Gong/Yu) Mapping**: Evaluates chroma sparseness at scale degrees. Automatically detects and maps Chinese pentatonic modes (e.g. `D 宫调式`) instead of forcing them into Western Major/Minor keys.
+- **Tonal Third Discriminator**: Hard-discriminates Major vs Minor keys by calculating the ratio between the Minor Tonal Third and Major Tonal Third, resolving classic synthwave major-minor key confusions (e.g. *Blinding Lights* F Minor).
+- **Phrygian-second Mediant Key Corrector**: Automatically overrides submediant major/minor key mismatches (e.g. A Minor to F Major) when the Phrygian flat-second degree (Bb) is much stronger than the major second (B), perfectly resolving Yoasobi *たぶん* to F Major.
+- **Fractional Linear Interpolation Chroma Projection**: Replaces discrete rounding with fractional linear interpolation, completely eliminating discrete frequency bin leakage in STFT chroma projection and restoring true harmonic balance.
+- **Dynamic Melodic Noise Gate**: Integrates 12x boost for tracked vocals and melody, while suppressing background, percussive, and structural floor resonances in non-melodic frames by up to 97%.
+- **Onset-Density Validated Octave Harmonic Evaluator**: Restricts subharmonic tempo halving by cross-validating autocorrelation lag with unfolded IOI histogram density. Solves body-percussion octave sways (e.g. *We Will Rock You* to 80.7 BPM) while locking fast beats (e.g. *Blinding Lights* to 172.3 BPM).
+- **9-Frame Moving Average Smoothing Filter**: Applied moving average smoothing to STFT energy envelopes, significantly improving downbeat correlation alignment robustness on sparse arrangements.
+
+### Changed
+- **Onset Tracker Debounce**: Optimized debounce window `min_interval_frames` from 15 to 4 to capture high-tempo beats (>170 BPM) and subdivisions.
+
 ## [0.4.0] - 2026-05-31
 
 ### Added

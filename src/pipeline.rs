@@ -54,7 +54,7 @@ impl SonicPipeline {
         let bpm_boundaries = bpm_detector.detect_boundaries(&spectrogram);
 
         // 构建 IOI (Inter-Onset Interval) 直方图桶进行投票
-        let mut ioi_histogram = [0.0f32; 28];
+        let mut ioi_histogram = [0.0f32; 41];
         if !bpm_boundaries.is_empty() {
             let boundary_times: Vec<f32> = bpm_boundaries
                 .iter()
@@ -65,40 +65,32 @@ impl SonicPipeline {
                 if i + 1 < boundary_times.len() {
                     let diff = boundary_times[i + 1] - boundary_times[i];
                     if diff > 0.15 && diff < 2.5 {
-                        let mut b = 60.0 / diff;
-                        while b < 60.0 {
-                            b *= 2.0;
+                        let b = 60.0 / diff;
+                        if (50.0..=250.0).contains(&b) {
+                            let bin_idx = (((b - 50.0) / 5.0).floor() as usize).min(40);
+                            ioi_histogram[bin_idx] += 1.0;
                         }
-                        while b > 200.0 {
-                            b /= 2.0;
-                        }
-                        let bin_idx = (((b - 60.0) / 5.0).floor() as usize).min(27);
-                        ioi_histogram[bin_idx] += 1.0;
                     }
                 }
                 // 跨拍间隔
                 if i + 2 < boundary_times.len() {
                     let diff = boundary_times[i + 2] - boundary_times[i];
                     if diff > 0.15 && diff < 2.5 {
-                        let mut b = 60.0 / diff;
-                        while b < 60.0 {
-                            b *= 2.0;
+                        let b = 60.0 / diff;
+                        if (50.0..=250.0).contains(&b) {
+                            let bin_idx = (((b - 50.0) / 5.0).floor() as usize).min(40);
+                            ioi_histogram[bin_idx] += 0.5; // 跨拍作为辅助特征
                         }
-                        while b > 200.0 {
-                            b /= 2.0;
-                        }
-                        let bin_idx = (((b - 60.0) / 5.0).floor() as usize).min(27);
-                        ioi_histogram[bin_idx] += 0.5; // 跨拍作为辅助特征
                     }
                 }
             }
         }
 
         // 对直方图进行一阶高斯平滑
-        let mut smooth_hist = [0.0f32; 28];
-        for idx in 0..28 {
+        let mut smooth_hist = [0.0f32; 41];
+        for idx in 0..41 {
             let left = if idx > 0 { ioi_histogram[idx - 1] } else { 0.0 };
-            let right = if idx + 1 < 28 {
+            let right = if idx + 1 < 41 {
                 ioi_histogram[idx + 1]
             } else {
                 0.0
@@ -106,14 +98,23 @@ impl SonicPipeline {
             smooth_hist[idx] = left * 0.25 + ioi_histogram[idx] * 0.5 + right * 0.25;
         }
 
-        // 提取能量包络并做零均值自相关
-        let envelope: Vec<f32> = spectrogram
+        // 提取能量包络并做移动平均平滑，以提高长周期（慢速 tempo）自相关的稳健性
+        let raw_envelope: Vec<f32> = spectrogram
             .iter()
             .map(|frame| {
                 let sum_power: f32 = frame.iter().map(|&x| x * x).sum();
                 (sum_power / frame.len() as f32).sqrt()
             })
             .collect();
+
+        let mut envelope = vec![0.0f32; raw_envelope.len()];
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..raw_envelope.len() {
+            let start = i.saturating_sub(1);
+            let end = (i + 1).min(raw_envelope.len() - 1);
+            let sum: f32 = raw_envelope[start..=end].iter().sum();
+            envelope[i] = sum / (end - start + 1) as f32;
+        }
 
         let estimated_bpm = if envelope.len() >= 64 {
             let mean: f32 = envelope.iter().sum::<f32>() / envelope.len() as f32;
@@ -159,24 +160,21 @@ impl SonicPipeline {
             #[allow(clippy::needless_range_loop)]
             for lag in min_lag..=max_lag {
                 let bpm_cand = 60.0 / (lag as f32 * frame_duration);
-                let mut mapped_bpm = bpm_cand;
-                while mapped_bpm < 60.0 {
-                    mapped_bpm *= 2.0;
-                }
-                while mapped_bpm > 200.0 {
-                    mapped_bpm /= 2.0;
-                }
-
-                let bin_idx = (((mapped_bpm - 60.0) / 5.0).floor() as usize).min(27);
+                let bin_idx = if (50.0..=250.0).contains(&bpm_cand) {
+                    (((bpm_cand - 50.0) / 5.0).floor() as usize).min(40)
+                } else {
+                    40
+                };
                 let hist_vote = smooth_hist[bin_idx];
 
                 // 置信度公式：自相关值 * (1.0 + 1.2 * 直方图平滑因子)
                 let mut confidence = corr_norm[lag] * (1.0 + 1.2 * hist_vote);
 
-                // 适度向更主干、中低速 [60, 120] 区间进行八度偏置纠正
-                if bpm_cand > 120.0 {
-                    confidence *= 0.90;
-                }
+                // 人性化舒适节奏偏好曲线 (log-Gaussian centered at 115 BPM, width ln(2))
+                let bpm_ratio = bpm_cand / 115.0;
+                let log_ratio = bpm_ratio.ln();
+                let comfort_weight = (-0.5 * (log_ratio / std::f32::consts::LN_2).powi(2)).exp();
+                confidence *= comfort_weight;
 
                 if confidence > max_confidence {
                     max_confidence = confidence;
@@ -184,17 +182,40 @@ impl SonicPipeline {
                 }
             }
 
-            let mut bpm = 60.0 / (best_lag as f32 * frame_duration);
+            let mut best_bpm = 60.0 / (best_lag as f32 * frame_duration);
+
+            // 八度谐波判定器 (Octave Harmonic Evaluator)：
+            // 如果在 2x lag 处（代表半速 BPM）同样具有较强的自相关，且直方图没有压倒性支持快速倍频，说明实际速度应该是半速！
+            let double_lag = best_lag * 2;
+            if double_lag <= max_lag && corr_norm[double_lag] > 0.45 * corr_norm[best_lag] {
+                let best_bpm_val = 60.0 / (best_lag as f32 * frame_duration);
+                let half_bpm_val = best_bpm_val / 2.0;
+                let bin_idx_best = if (50.0..=250.0).contains(&best_bpm_val) {
+                    (((best_bpm_val - 50.0) / 5.0).floor() as usize).min(40)
+                } else {
+                    40
+                };
+                let bin_idx_half = if (50.0..=250.0).contains(&half_bpm_val) {
+                    (((half_bpm_val - 50.0) / 5.0).floor() as usize).min(40)
+                } else {
+                    40
+                };
+
+                // 如果快速倍频的直方图投票数没有达到慢速半频的 2.5 倍以上，则安全下折为慢速 BPM
+                if smooth_hist[bin_idx_best] < 2.5 * smooth_hist[bin_idx_half] {
+                    best_bpm /= 2.0;
+                }
+            }
 
             // 最终锁定健康节奏区间
-            while bpm < 55.0 {
-                bpm *= 2.0;
+            while best_bpm < 60.0 {
+                best_bpm *= 2.0;
             }
-            while bpm > 210.0 {
-                bpm /= 2.0;
+            while best_bpm > 200.0 {
+                best_bpm /= 2.0;
             }
 
-            bpm
+            best_bpm
         } else {
             120.0f32 // Fallback BPM
         };
@@ -351,22 +372,58 @@ impl SonicPipeline {
                     }
                 }
 
-                // 色度向量合并 (基于 200Hz - 2kHz 审美带通投影，过滤低频共振与高频刺耳物，聚焦旋律音高)
+                // Apply flatness-based noise suppression to only accumulate chroma from tonal/melodic frames.
+                let tonal_weight = if flatness > 0.22 {
+                    0.05f32 // Suppress noisy frames (stomps, claps, percussion, silence)
+                } else {
+                    1.0f32
+                };
+
+                // 色度向量合并 (基于 200Hz - 2kHz 审美带通投影，以线性插值消除离散傅里叶频段泄漏，动态旋律加权以消除敲击/共鸣底噪)
                 for (bin, &mag) in frame.iter().enumerate() {
                     let freq = bin as f32 * (sr / window_size as f32);
                     if (200.0..=2000.0).contains(&freq) {
-                        // 物理公式：将频率转化为 MIDI 音高 p = 69 + 12 * log2(f/440)
                         let midi_pitch = 69.0 + 12.0 * (freq / 440.0).log2();
-                        let pitch_class = (midi_pitch.round() as i32) % 12;
-                        if pitch_class >= 0 {
-                            // 旋律线加权：如果该音高被判定为主旋律骨架，赋予其 3.0 倍的 Melodic Boosting 权重
-                            let weight = if pitch_class == melody_pitch_class {
-                                3.0f32
-                            } else {
-                                1.0f32
-                            };
-                            sum_chroma[pitch_class as usize] += mag * weight;
-                            global_chroma[pitch_class as usize] += mag * weight;
+                        if midi_pitch >= 0.0 {
+                            let p_floor = midi_pitch.floor();
+                            let p_ceil = midi_pitch.ceil();
+                            let w_high = midi_pitch - p_floor;
+                            let w_low = 1.0 - w_high;
+
+                            let pc_low = (p_floor as i32) % 12;
+                            let pc_high = (p_ceil as i32) % 12;
+
+                            if pc_low >= 0 && pc_high >= 0 {
+                                // Dynamic melody boost and noise gate
+                                let weight_low = if melody_pitch_class >= 0 {
+                                    if pc_low == melody_pitch_class {
+                                        12.0f32
+                                    } else {
+                                        0.2f32
+                                    }
+                                } else {
+                                    0.3f32
+                                };
+                                let weight_high = if melody_pitch_class >= 0 {
+                                    if pc_high == melody_pitch_class {
+                                        12.0f32
+                                    } else {
+                                        0.2f32
+                                    }
+                                } else {
+                                    0.3f32
+                                };
+
+                                sum_chroma[pc_low as usize] +=
+                                    mag * w_low * weight_low * tonal_weight;
+                                sum_chroma[pc_high as usize] +=
+                                    mag * w_high * weight_high * tonal_weight;
+
+                                global_chroma[pc_low as usize] +=
+                                    mag * w_low * weight_low * tonal_weight;
+                                global_chroma[pc_high as usize] +=
+                                    mag * w_high * weight_high * tonal_weight;
+                            }
                         }
                     }
                 }

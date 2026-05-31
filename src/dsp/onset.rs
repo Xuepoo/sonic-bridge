@@ -35,7 +35,7 @@ impl OnsetDetector {
         let lambda = 1.5f32; // Median scaling factor
         let alpha = self.threshold * 0.05f32; // Offset factor bound to config
 
-        let min_interval_frames = 15; // Approximately 348ms minimum interval to debounce dense transients
+        let min_interval_frames = 4; // Approximately 93ms minimum interval to support high-tempo and dense beats
         let mut last_onset_frame = 0;
 
         for i in 1..num_frames {

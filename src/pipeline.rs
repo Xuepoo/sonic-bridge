@@ -153,6 +153,14 @@ impl SonicPipeline {
                 }
             }
 
+            let variance =
+                zero_mean_env.iter().map(|&x| x * x).sum::<f32>() / zero_mean_env.len() as f32;
+            let peak_coeff = if variance > 1e-6 {
+                (max_corr / variance).max(0.0)
+            } else {
+                0.0
+            };
+
             // 置信度模型投票决策
             let mut best_lag = 0;
             let mut max_confidence = -1e9f32;
@@ -167,8 +175,8 @@ impl SonicPipeline {
                 };
                 let hist_vote = smooth_hist[bin_idx];
 
-                // 置信度公式：自相关值 * (1.0 + 1.2 * 直方图平滑因子)
-                let mut confidence = corr_norm[lag] * (1.0 + 1.2 * hist_vote);
+                // 置信度公式：自相关值 * (1.0 + 1.2 * 直方图平滑因子) * peak_coeff
+                let mut confidence = corr_norm[lag] * (1.0 + 1.2 * hist_vote) * peak_coeff;
 
                 // 人性化舒适节奏偏好曲线 (log-Gaussian centered at 115 BPM, width ln(2))
                 let bpm_ratio = bpm_cand / 115.0;
@@ -207,6 +215,25 @@ impl SonicPipeline {
                 }
             }
 
+            // Metric Up-shifter & 3/4 Waltz Corrector:
+            if best_bpm < 75.0 {
+                let double_bpm = best_bpm * 2.0;
+                let triple_bpm = best_bpm * 3.0;
+                let bin_idx_triple = if (50.0..=250.0).contains(&triple_bpm) {
+                    (((triple_bpm - 50.0) / 5.0).floor() as usize).min(40)
+                } else {
+                    40
+                };
+                let triple_vote = smooth_hist[bin_idx_triple];
+                let total_votes = smooth_hist.iter().sum::<f32>().max(1.0);
+
+                if triple_vote > 0.08 * total_votes {
+                    best_bpm = triple_bpm;
+                } else {
+                    best_bpm = double_bpm;
+                }
+            }
+
             // 最终锁定健康节奏区间
             while best_bpm < 60.0 {
                 best_bpm *= 2.0;
@@ -215,13 +242,29 @@ impl SonicPipeline {
                 best_bpm /= 2.0;
             }
 
-            best_bpm
+            // Ambient / beatless free rhythm fallback detection
+            let mut diff_sum = 0.0f32;
+            for i in 1..envelope.len() {
+                diff_sum += (envelope[i] - envelope[i - 1]).powi(2);
+            }
+            let diff_variance = diff_sum / (envelope.len() - 1) as f32;
+
+            let duration = spectrogram.len() as f32 * frame_duration;
+            let onset_density = bpm_boundaries.len() as f32 / duration;
+
+            if max_confidence < 0.28 || onset_density < 0.20 || diff_variance < 0.015 {
+                -1.0f32
+            } else {
+                best_bpm
+            }
         } else {
-            120.0f32 // Fallback BPM
+            -1.0f32 // Fallback Ambient BPM
         };
 
         // 自适应节奏主观体感映射 (tempo_feeling)
-        let tempo_desc = if estimated_bpm < 75.0 {
+        let tempo_desc = if estimated_bpm < 0.0 {
+            "Free Rhythm (Ambient/Rubato)"
+        } else if estimated_bpm < 75.0 {
             "Slow & Solemn (Adagio/Lento)"
         } else if estimated_bpm < 105.0 {
             "Moderate & Gentle (Andante)"
@@ -257,7 +300,12 @@ impl SonicPipeline {
             temp.dedup();
             split_points = temp;
         } else if config.beat_mode {
-            let beat_duration = 60.0 / estimated_bpm;
+            let active_bpm = if estimated_bpm > 0.0 {
+                estimated_bpm
+            } else {
+                120.0
+            };
+            let beat_duration = 60.0 / active_bpm;
             let frames_per_beat = (beat_duration / frame_duration).round() as usize;
             let mut temp = vec![0];
             let mut current_frame = frames_per_beat;

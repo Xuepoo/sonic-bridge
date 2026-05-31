@@ -3,7 +3,28 @@ use sonic_bridge::pipeline::SonicPipeline;
 use std::env;
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+fn normalize_path(raw_path: &str) -> PathBuf {
+    use unicode_normalization::UnicodeNormalization;
+    let p = PathBuf::from(raw_path);
+    if p.exists() {
+        return p;
+    }
+    // Try NFC normalization
+    let nfc_str: String = raw_path.nfc().collect();
+    let nfc_path = PathBuf::from(&nfc_str);
+    if nfc_path.exists() {
+        return nfc_path;
+    }
+    // Try NFD normalization
+    let nfd_str: String = raw_path.nfd().collect();
+    let nfd_path = PathBuf::from(&nfd_str);
+    if nfd_path.exists() {
+        return nfd_path;
+    }
+    p
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -33,6 +54,7 @@ fn main() {
     let mut use_onset = false;
     let mut use_quiet = false;
     let mut use_render = false;
+    let mut custom_threshold = None;
     let mut clean_args = Vec::new();
 
     let mut i = 1;
@@ -45,6 +67,22 @@ fn main() {
                 eprintln!(
                     "\x1b[1;31m[-] Error:\x1b[0m --config option requires a valid file path value."
                 );
+                print_usage();
+                std::process::exit(1);
+            }
+        } else if args[i] == "--threshold" {
+            if i + 1 < args.len() {
+                if let Ok(val) = args[i + 1].parse::<f32>() {
+                    custom_threshold = Some(val);
+                } else {
+                    eprintln!(
+                        "\x1b[1;31m[-] Error:\x1b[0m --threshold option requires a valid floating number."
+                    );
+                    std::process::exit(1);
+                }
+                i += 2;
+            } else {
+                eprintln!("\x1b[1;31m[-] Error:\x1b[0m --threshold option requires a value.");
                 print_usage();
                 std::process::exit(1);
             }
@@ -95,10 +133,13 @@ fn main() {
     if use_quiet {
         config.quiet_mode = true;
     }
+    if let Some(t) = custom_threshold {
+        config.onset_threshold = t;
+    }
 
     if clean_args.len() == 1 {
         // 单音轨审美分析模式
-        let audio_path = Path::new(&clean_args[0]);
+        let audio_path = normalize_path(&clean_args[0]);
 
         // Physical existence check
         if !audio_path.exists() {
@@ -139,7 +180,7 @@ fn main() {
             );
         }
 
-        match SonicPipeline::process_single(audio_path, &config) {
+        match SonicPipeline::process_single(&audio_path, &config) {
             Ok((meta, segs)) => {
                 let mut report = Vec::new();
                 report.push("# SonicBridge: LLM-Readable Music Descriptor (LRMD)\n".to_string());
@@ -187,7 +228,7 @@ fn main() {
                 let report_text = report.join("\n");
 
                 // 保存到本地
-                let out_path = format!("{}.lrmd.md", clean_args[0]);
+                let out_path = format!("{}.lrmd.md", audio_path.display());
                 if let Ok(mut file) = File::create(&out_path) {
                     let _ = file.write_all(report_text.as_bytes());
                     if !config.quiet_mode {
@@ -209,8 +250,8 @@ fn main() {
         }
     } else if clean_args.len() == 2 {
         // 双音轨比对模式
-        let path_a = Path::new(&clean_args[0]);
-        let path_b = Path::new(&clean_args[1]);
+        let path_a = normalize_path(&clean_args[0]);
+        let path_b = normalize_path(&clean_args[1]);
 
         let mut has_err = false;
         if !path_a.exists() {
@@ -239,7 +280,7 @@ fn main() {
             );
         }
 
-        match SonicPipeline::process_comparative(path_a, path_b) {
+        match SonicPipeline::process_comparative(&path_a, &path_b) {
             Ok(report_text) => {
                 let out_path = format!(
                     "{}_vs_{}.lrmd.md",
@@ -302,6 +343,7 @@ fn print_usage() {
     println!("\x1b[1;33mOPTIONS:\x1b[0m");
     println!("  \x1b[32m--onset\x1b[0m          Enable event-driven adaptive interval segmenting (Onset detection)");
     println!("                   (Defaults to fixed step time segmenting if omitted)");
+    println!("  \x1b[32m--threshold <val>\x1b[0m Overwrite default Onset sensitivity threshold (e.g., 1.5 to filter noise)");
     println!("  \x1b[32m--quiet, -q\x1b[0m      Mute outputting markdown report preview in standard stdout");
     println!("  \x1b[32m--config <path>\x1b[0m  Specify target TOML config file path (Override default XDG paths)");
     println!(

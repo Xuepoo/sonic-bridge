@@ -4,6 +4,20 @@ All notable changes to the `sonic-bridge` core library and CLI will be documente
 
 ---
 
+## [0.3.7] - 2026-05-31
+
+### Added
+- **Dynamic Onset-Based BPM Estimator (Issue #30)**: Designed a high-precision BPM detection algorithm based on Onset Interval Autocorrelation and Median filtering, mapping tempos to the 60-180 BPM range dynamically.
+- **Adaptive Tempo Subjective Mapping**: Implemented tempo feeling descriptions (e.g. Adagio, Andante, Moderato, Allegro, Presto) dynamically bound to estimated BPM.
+- **Global Key Detector Integration (Issue #31)**: Wired the unused `KeyDetector` Krumhansl-Schmuckler algorithm back to the top-level pipeline, correctly accumulating 12-dimensional chroma centroids across all frames instead of hardcoding "Unknown".
+- **CLI `--threshold <value>` Parameter (Issue #33)**: Exposed a flexible threshold configuration option to let users customize onset sensitivity at run time.
+
+### Changed
+- **NFC/NFD Unicode Path Normalization (Issue #32)**: Created a dual-normalization fallback (`normalize_path`) to auto-convert NFC and NFD paths, resolving compatibility errors when accessing files with Japanese dakuten/handakuten on macOS.
+- **Minimum Onset Interval Debouncing**: Tuned onset detection to suppress high-frequency micro-transient jitters with a 348ms minimum interval constraint, preventing segment fragmentation.
+
+---
+
 ## [0.3.6] - 2026-05-31
 
 ### Added

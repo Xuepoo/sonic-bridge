@@ -3,6 +3,7 @@ use crate::config::SonicConfig;
 use crate::decoder::AudioDecoder;
 use crate::dsp::spectrogram::StftEngine;
 use crate::musicology::chroma::ChordClassifier;
+use crate::musicology::key::KeyDetector;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -46,11 +47,55 @@ impl SonicPipeline {
         let engine = StftEngine::new(window_size, hop_size);
         let spectrogram = engine.compute(&samples)?;
 
-        // 3. 初始化乐理分析器
-        let chord_classifier = ChordClassifier::new();
-
-        let mut segments = Vec::new();
+        // 3. 计算自适应全局 BPM (BPM Estimator based on Onset Interval Autocorrelation / Median)
+        let bpm_detector = crate::dsp::onset::OnsetDetector::new(config.onset_threshold);
+        let bpm_boundaries = bpm_detector.detect_boundaries(&spectrogram);
         let frame_duration = hop_size as f32 / sr;
+        let mut boundary_times: Vec<f32> = bpm_boundaries
+            .iter()
+            .map(|&f| f as f32 * frame_duration)
+            .collect();
+        boundary_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut bpm_candidates = Vec::new();
+        for idx in 1..boundary_times.len() {
+            let diff = boundary_times[idx] - boundary_times[idx - 1];
+            if diff > 0.15f32 && diff < 2.5f32 {
+                let mut candidate_bpm = 60.0f32 / diff;
+                // 归一化折算到 60.0 - 180.0 正常人耳听觉拍频区间
+                while candidate_bpm < 60.0f32 {
+                    candidate_bpm *= 2.0;
+                }
+                while candidate_bpm > 180.0f32 {
+                    candidate_bpm /= 2.0;
+                }
+                bpm_candidates.push(candidate_bpm);
+            }
+        }
+        let estimated_bpm = if !bpm_candidates.is_empty() {
+            bpm_candidates.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            bpm_candidates[bpm_candidates.len() / 2]
+        } else {
+            120.0f32 // Fallback BPM
+        };
+
+        // 自适应节奏主观体感映射 (tempo_feeling)
+        let tempo_desc = if estimated_bpm < 75.0 {
+            "Slow & Solemn (Adagio/Lento)"
+        } else if estimated_bpm < 105.0 {
+            "Moderate & Gentle (Andante)"
+        } else if estimated_bpm < 135.0 {
+            "Moderate & Flowing (Moderato)"
+        } else if estimated_bpm < 165.0 {
+            "Fast & Energetic (Allegro)"
+        } else {
+            "Extremely Rapid (Presto)"
+        };
+
+        // 4. 初始化乐理分析器与全局 Chroma 累加器
+        let chord_classifier = ChordClassifier::new();
+        let mut segments = Vec::new();
+        let mut global_chroma = vec![0.0f32; 12];
 
         // 根据 config.step_size 决定自适应分块帧数
         let frames_per_step = (config.step_size / frame_duration).round() as usize;
@@ -136,6 +181,7 @@ impl SonicPipeline {
                         let pitch_class = (midi_pitch.round() as i32) % 12;
                         if pitch_class >= 0 {
                             sum_chroma[pitch_class as usize] += mag;
+                            global_chroma[pitch_class as usize] += mag;
                         }
                     }
                 }
@@ -236,10 +282,8 @@ impl SonicPipeline {
         }
 
         // 估计全局属性
-        let global_chroma: Vec<f32> = (0..12)
-            .map(|_i| segments.iter().map(|s| s.raw_energy).sum()) // 粗估
-            .collect();
-        let global_key = chord_classifier.classify(&global_chroma);
+        let key_detector = KeyDetector::new();
+        let global_key = key_detector.detect(&global_chroma);
 
         let global_metadata = GlobalMetadata {
             filename: audio_path
@@ -249,9 +293,9 @@ impl SonicPipeline {
                 .unwrap()
                 .to_string(),
             duration_seconds: duration,
-            estimated_bpm: 120.0, // 默认均值速度
+            estimated_bpm,
             estimated_global_key: global_key,
-            tempo_feeling: "Moderate & Flowing (Andante/Moderato)".to_string(),
+            tempo_feeling: tempo_desc.to_string(),
         };
         let merged_segments = Self::merge_segments(segments);
         Ok((global_metadata, merged_segments))

@@ -8,6 +8,7 @@ pub struct StyleVector {
     pub traditional_chinese: f32,
     pub jazz_rubato: f32,
     pub ambient_free: f32,
+    pub triple_meter: bool,
 }
 
 pub struct StyleClassifier;
@@ -40,6 +41,59 @@ impl StyleClassifier {
         if frame_count > 0 {
             for val in &mut avg_mfccs {
                 *val /= frame_count as f32;
+            }
+        }
+
+        // 1.5. OPIH Time-Signature Analysis (Autocorrelation on Spectral Flux)
+        let limit_frames = spectrogram.len().min(1300);
+        let mut triple_meter = false;
+        if limit_frames > 200 {
+            let mut fluxes = vec![0.0f32; limit_frames];
+            let num_bins = spectrogram[0].len();
+            for i in 1..limit_frames {
+                let mut flux = 0.0f32;
+                for (&curr, &prev) in spectrogram[i].iter().zip(spectrogram[i - 1].iter()) {
+                    let diff = curr - prev;
+                    if diff > 0.0 {
+                        flux += diff;
+                    }
+                }
+                fluxes[i] = flux / num_bins as f32;
+            }
+
+            // Autocorrelation over lag range [10, 100] (roughly 130ms to 2.3s intervals)
+            let min_lag = 10;
+            let max_lag = 100.min(limit_frames / 2);
+            let mut acf = vec![0.0f32; max_lag - min_lag];
+            for lag in min_lag..max_lag {
+                let mut sum = 0.0f32;
+                for n in lag..limit_frames {
+                    sum += fluxes[n] * fluxes[n - lag];
+                }
+                acf[lag - min_lag] = sum;
+            }
+
+            // Peak extraction
+            let mut peaks = Vec::new();
+            for i in 1..(acf.len() - 1) {
+                if acf[i] > acf[i - 1] && acf[i] > acf[i + 1] && acf[i] > 1e-3 {
+                    peaks.push((i + min_lag, acf[i]));
+                }
+            }
+            peaks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            if peaks.len() >= 2 {
+                let p1 = peaks[0].0 as f32;
+                let p2 = peaks[1].0 as f32;
+                let ratio = p2 / p1;
+                // Triple/odd meter ratio check: 3/4 or 6/8 lag patterns (ratios of 1.5, 3.0, 0.67, 0.75)
+                if (ratio - 1.5).abs() < 0.1
+                    || (ratio - 3.0).abs() < 0.15
+                    || (ratio - 0.75).abs() < 0.08
+                    || (ratio - 0.67).abs() < 0.08
+                {
+                    triple_meter = true;
+                }
             }
         }
 
@@ -92,6 +146,10 @@ impl StyleClassifier {
             }
         }
 
+        if triple_meter {
+            jazz_rubato += 0.40;
+        }
+
         // Normalize style probabilities
         let sum = classical + electronic_pop + traditional_chinese + jazz_rubato + ambient_free;
         StyleVector {
@@ -100,6 +158,7 @@ impl StyleClassifier {
             traditional_chinese: traditional_chinese / sum,
             jazz_rubato: jazz_rubato / sum,
             ambient_free: ambient_free / sum,
+            triple_meter,
         }
     }
 }

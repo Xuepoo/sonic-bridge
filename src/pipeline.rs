@@ -557,15 +557,28 @@ impl SonicPipeline {
         }
 
         // 6. 后扫描全局调性属性 (Chroma 充分积累后由 Decision Engine 选择最佳调性)
-        let (_, global_key, _) =
-            selector.select(&global_chroma, &spectrogram, &style_vector, &precomputed);
+        let refined_style_vector = StyleClassifier::classify(
+            &spectrogram,
+            &global_chroma,
+            precomputed.onset_density,
+            precomputed.diff_variance,
+            precomputed.max_confidence,
+            sr,
+        );
+
+        let (_, global_key, _) = selector.select(
+            &global_chroma,
+            &spectrogram,
+            &refined_style_vector,
+            &precomputed,
+        );
 
         // 获取主导音乐风格标签
-        let primary_style = if style_vector.ambient_free > 0.40 {
+        let primary_style = if refined_style_vector.ambient_free > 0.40 {
             "Ambient/Ambient Free"
-        } else if style_vector.traditional_chinese > 0.40 {
+        } else if refined_style_vector.traditional_chinese > 0.40 {
             "Traditional Chinese Folk/Modal"
-        } else if style_vector.jazz_rubato > 0.40 {
+        } else if refined_style_vector.jazz_rubato > 0.40 {
             "Jazz/Rubato Improvisation"
         } else if style_vector.classical > style_vector.electronic_pop {
             "Western Classical/Acoustic Solo"
@@ -1312,6 +1325,23 @@ impl EnsembleSelector {
         }
 
         if best_bpm > 0.0 {
+            // Waltz 3/4 override: if triple vote is strong and envelope indicates beats,
+            // we up-shift to triple tempo (Waltz)
+            let best_lag_bpm = 60.0 / (features.best_lag as f32 * features.frame_duration);
+            let triple_bpm = best_lag_bpm * 3.0;
+            let double_bpm = best_lag_bpm * 2.0;
+            let bin_idx_double = (((double_bpm - 50.0) / 5.0).floor() as usize).min(40);
+            let bin_idx_triple = (((triple_bpm - 50.0) / 5.0).floor() as usize).min(40);
+            let double_vote = features.smooth_hist[bin_idx_double];
+            let triple_vote = features.smooth_hist[bin_idx_triple];
+
+            if triple_vote > 0.30 * double_vote
+                && triple_vote > 0.8
+                && features.diff_variance >= 0.035
+            {
+                best_bpm = triple_bpm;
+            }
+
             while best_bpm < 60.0 {
                 best_bpm *= 2.0;
             }
@@ -1322,8 +1352,17 @@ impl EnsembleSelector {
 
         let mut best_key = "Unknown".to_string();
         let mut max_key_weight = -1.0;
+        let mut best_pentatonic_key = None;
+        let mut max_pentatonic_conf = -1.0;
 
         for key_cand in &all_key {
+            if key_cand.source == "ChinesePentatonicDetector"
+                && key_cand.confidence > max_pentatonic_conf
+            {
+                max_pentatonic_conf = key_cand.confidence;
+                best_pentatonic_key = Some(key_cand.key.clone());
+            }
+
             let style_weight = match key_cand.source {
                 "AmbientFreeDetector" => style.ambient_free,
                 "ChinesePentatonicDetector" => style.traditional_chinese,
@@ -1337,6 +1376,14 @@ impl EnsembleSelector {
             if weight > max_key_weight {
                 max_key_weight = weight;
                 best_key = key_cand.key.clone();
+            }
+        }
+
+        // Pentatonic priority override: if pentatonic confidence is high (> 0.50),
+        // we select it over Western Major/Minor!
+        if max_pentatonic_conf > 0.50 {
+            if let Some(pent_key) = best_pentatonic_key {
+                best_key = pent_key;
             }
         }
 

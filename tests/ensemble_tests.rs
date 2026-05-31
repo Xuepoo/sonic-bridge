@@ -17,7 +17,7 @@ fn test_ensemble_selector_c_major() {
 
     let features = PrecomputedFeatures {
         envelope: vec![1.0; 100],
-        diff_variance: 0.05,
+        diff_variance: 0.12,
         onset_density: 1.2,
         smooth_hist: [1.0; 41],
         frame_duration: 0.023,

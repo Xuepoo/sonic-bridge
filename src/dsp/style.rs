@@ -61,17 +61,10 @@ impl StyleClassifier {
             0.0
         };
 
-        // If top 5 bins have >80% energy, it's highly pentatonic
+        // If top 5 bins have >81% energy, it's highly pentatonic
         let is_chinese_folk = pentatonic_ratio > 0.81;
 
-        // 4. Identify Jazz/Rubato characteristics:
-        // - High onset density but low autocorrelation confidence (rubato timing fluctuation)
-        let is_jazz = onset_density > 0.2
-            && onset_density < 1.3
-            && max_confidence < 0.35
-            && diff_variance < 0.06;
-
-        // 5. Establish heuristic weights
+        // 4. Establish heuristic weights
         let mut classical = 0.05f32;
         let mut electronic_pop = 0.05f32;
         let mut traditional_chinese = 0.05f32;
@@ -85,15 +78,14 @@ impl StyleClassifier {
             traditional_chinese += 0.80;
             classical += 0.10;
             electronic_pop += 0.05;
-        } else if is_jazz {
-            jazz_rubato += 0.75;
-            classical += 0.15;
-            electronic_pop += 0.05;
+        } else if diff_variance >= 0.09 && avg_mfccs[1] < 4.0 {
+            electronic_pop += 0.80;
+            jazz_rubato += 0.10;
         } else {
-            // Differentiate via envelope energy variance (drums vs legato instruments)
-            if diff_variance >= 0.035 && max_confidence >= 0.32 {
-                electronic_pop += 0.80;
-                jazz_rubato += 0.10;
+            // Acoustic Branch: Differentiate classical solo vs syncopated jazz standards
+            if onset_density > 0.30 && max_confidence >= 0.35 {
+                jazz_rubato += 0.75;
+                classical += 0.15;
             } else {
                 classical += 0.75;
                 jazz_rubato += 0.15;

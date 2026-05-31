@@ -202,10 +202,17 @@ fn main() {
                     "- **Duration**: `{:.2} seconds`",
                     meta.duration_seconds
                 ));
-                report.push(format!(
-                    "- **Tempo (BPM)**: `{:.1} BPM` ({})",
-                    meta.estimated_bpm, meta.tempo_feeling
-                ));
+                if meta.estimated_bpm < 0.0 {
+                    report.push(format!(
+                        "- **Tempo (BPM)**: `Unknown (Ambient / Free Rhythm)` ({})",
+                        meta.tempo_feeling
+                    ));
+                } else {
+                    report.push(format!(
+                        "- **Tempo (BPM)**: `{:.1} BPM` ({})",
+                        meta.estimated_bpm, meta.tempo_feeling
+                    ));
+                }
                 report.push(format!(
                     "- **Estimated Key**: `{}`\n",
                     meta.estimated_global_key

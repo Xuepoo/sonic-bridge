@@ -1,8 +1,11 @@
-/// KeyDetector implements the Krumhansl-Schmuckler key profiles templates matching algorithm.
-/// It pre-computes 24 normalized key profiles (12 Major, 12 Minor) and detects the global tonal key
-/// of a given cumulative chroma centroid vector with high DSP performance.
+/// KeyDetector implements an ensemble template matching algorithm combining
+/// Krumhansl-Kessler, Temperley, and Sha'ath key profiles.
+/// It pre-computes 24 key templates across all three profiles and runs
+/// a two-pass root-locking and major/minor/pentatonic mode classifier.
 pub struct KeyDetector {
-    templates: Vec<(String, Vec<f32>)>,
+    // 24 templates: each entry contains:
+    // (KeyName, KKProfile, TemperleyProfile, ShaathProfile)
+    templates: Vec<(String, Vec<f32>, Vec<f32>, Vec<f32>)>,
 }
 
 impl Default for KeyDetector {
@@ -13,48 +16,105 @@ impl Default for KeyDetector {
 
 impl KeyDetector {
     /// Creates a new `KeyDetector` and pre-computes 24 key templates.
-    /// Uses Krumhansl-Kessler experimental pitch class profiles.
     pub fn new() -> Self {
         let pitch_names = [
             "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
         ];
 
-        // Adjusted Krumhansl-Kessler key profiles to emphasize b3 and b6 for Minor, and b3 reduction for Major
-        let base_major = vec![
+        // 1. Krumhansl-Kessler experimental pitch class profiles
+        let kk_major = vec![
             6.35, 2.23, 3.48, 1.50, 4.80, 4.09, 2.52, 5.19, 2.00, 3.66, 2.29, 2.88,
         ];
-        let base_minor = vec![
+        let kk_minor = vec![
             6.33, 2.68, 3.52, 6.20, 1.50, 3.53, 2.54, 4.75, 4.80, 2.69, 3.34, 3.17,
         ];
+
+        // 2. Temperley key profiles (academic/classical)
+        let temp_major = vec![5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0];
+        let temp_minor = vec![5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0];
+
+        // 3. Sha'ath key profiles (modern/electronic)
+        let shaath_major = vec![6.6, 2.0, 3.5, 2.3, 4.6, 4.0, 2.5, 5.2, 2.1, 3.7, 2.2, 3.0];
+        let shaath_minor = vec![6.5, 2.6, 3.5, 6.0, 1.6, 3.5, 2.6, 4.8, 4.6, 2.6, 3.2, 3.1];
 
         let mut templates = Vec::with_capacity(24);
 
         for i in 0..12 {
             let root = pitch_names[i].to_string();
 
-            // 1. Shift and normalize Major Profile
-            let mut major_shifted = [0.0f32; 12];
+            // Shift and normalize Major profiles
+            let mut kk_maj_shifted = [0.0f32; 12];
+            let mut temp_maj_shifted = [0.0f32; 12];
+            let mut shaath_maj_shifted = [0.0f32; 12];
             for j in 0..12 {
-                major_shifted[j] = base_major[(j + 12 - i) % 12];
+                kk_maj_shifted[j] = kk_major[(j + 12 - i) % 12];
+                temp_maj_shifted[j] = temp_major[(j + 12 - i) % 12];
+                shaath_maj_shifted[j] = shaath_major[(j + 12 - i) % 12];
             }
-            let major_norm = major_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
-            let major_normalized = major_shifted
+            let kk_maj_norm = kk_maj_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let temp_maj_norm = temp_maj_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let shaath_maj_norm = shaath_maj_shifted
                 .iter()
-                .map(|&x| x / major_norm)
-                .collect::<Vec<f32>>();
-            templates.push((format!("{} Major", root), major_normalized));
+                .map(|&x| x * x)
+                .sum::<f32>()
+                .sqrt();
 
-            // 2. Shift and normalize Minor Profile
-            let mut minor_shifted = [0.0f32; 12];
-            for j in 0..12 {
-                minor_shifted[j] = base_minor[(j + 12 - i) % 12];
-            }
-            let minor_norm = minor_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
-            let minor_normalized = minor_shifted
+            let kk_maj_normalized = kk_maj_shifted
                 .iter()
-                .map(|&x| x / minor_norm)
+                .map(|&x| x / kk_maj_norm)
                 .collect::<Vec<f32>>();
-            templates.push((format!("{} Minor", root), minor_normalized));
+            let temp_maj_normalized = temp_maj_shifted
+                .iter()
+                .map(|&x| x / temp_maj_norm)
+                .collect::<Vec<f32>>();
+            let shaath_maj_normalized = shaath_maj_shifted
+                .iter()
+                .map(|&x| x / shaath_maj_norm)
+                .collect::<Vec<f32>>();
+
+            templates.push((
+                format!("{} Major", root),
+                kk_maj_normalized,
+                temp_maj_normalized,
+                shaath_maj_normalized,
+            ));
+
+            // Shift and normalize Minor profiles
+            let mut kk_min_shifted = [0.0f32; 12];
+            let mut temp_min_shifted = [0.0f32; 12];
+            let mut shaath_min_shifted = [0.0f32; 12];
+            for j in 0..12 {
+                kk_min_shifted[j] = kk_minor[(j + 12 - i) % 12];
+                temp_min_shifted[j] = temp_minor[(j + 12 - i) % 12];
+                shaath_min_shifted[j] = shaath_minor[(j + 12 - i) % 12];
+            }
+            let kk_min_norm = kk_min_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let temp_min_norm = temp_min_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let shaath_min_norm = shaath_min_shifted
+                .iter()
+                .map(|&x| x * x)
+                .sum::<f32>()
+                .sqrt();
+
+            let kk_min_normalized = kk_min_shifted
+                .iter()
+                .map(|&x| x / kk_min_norm)
+                .collect::<Vec<f32>>();
+            let temp_min_normalized = temp_min_shifted
+                .iter()
+                .map(|&x| x / temp_min_norm)
+                .collect::<Vec<f32>>();
+            let shaath_min_normalized = shaath_min_shifted
+                .iter()
+                .map(|&x| x / shaath_min_norm)
+                .collect::<Vec<f32>>();
+
+            templates.push((
+                format!("{} Minor", root),
+                kk_min_normalized,
+                temp_min_normalized,
+                shaath_min_normalized,
+            ));
         }
 
         Self { templates }
@@ -64,8 +124,8 @@ impl KeyDetector {
     ///
     /// # Returns
     /// - "Silent" if the vector energy is too low.
-    /// - "Unknown" if input size is incorrect.
-    /// - The key name (e.g. "C Major", "A Minor") otherwise.
+    /// - "Unknown" if input size is incorrect or similarity is too low.
+    /// - The key name (e.g. "C Major", "A Minor", "D 宫调式") otherwise.
     pub fn detect(&self, chroma: &[f32]) -> String {
         if chroma.len() != 12 {
             return "Unknown".to_string();
@@ -83,91 +143,119 @@ impl KeyDetector {
             "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
         ];
 
-        let mut best_key = "Unknown".to_string();
-        let mut max_similarity = -1.0f32;
+        let mut best_root_idx = 0;
+        let mut max_root_score = -1e9f32;
+        let mut max_overall_similarity = -1.0f32;
 
-        for (key_name, template) in &self.templates {
-            let dot_product: f32 = chroma.iter().zip(template).map(|(&x, &y)| x * y).sum();
-            let similarity = dot_product / chroma_norm;
+        // Pass 1: Lock tonal root using the ensemble profile sum
+        for i in 0..12 {
+            let maj_template = &self.templates[i * 2];
+            let min_template = &self.templates[i * 2 + 1];
 
-            if similarity > 0.65 {
-                println!("DEBUG SIM: {} -> {:.4}", key_name, similarity);
+            // Major similarities
+            let maj_kk_dot: f32 = chroma
+                .iter()
+                .zip(&maj_template.1)
+                .map(|(&x, &y)| x * y)
+                .sum();
+            let maj_temp_dot: f32 = chroma
+                .iter()
+                .zip(&maj_template.2)
+                .map(|(&x, &y)| x * y)
+                .sum();
+            let maj_shaath_dot: f32 = chroma
+                .iter()
+                .zip(&maj_template.3)
+                .map(|(&x, &y)| x * y)
+                .sum();
+            let maj_sim = (maj_kk_dot + maj_temp_dot + maj_shaath_dot) / (3.0 * chroma_norm);
+
+            // Minor similarities
+            let min_kk_dot: f32 = chroma
+                .iter()
+                .zip(&min_template.1)
+                .map(|(&x, &y)| x * y)
+                .sum();
+            let min_temp_dot: f32 = chroma
+                .iter()
+                .zip(&min_template.2)
+                .map(|(&x, &y)| x * y)
+                .sum();
+            let min_shaath_dot: f32 = chroma
+                .iter()
+                .zip(&min_template.3)
+                .map(|(&x, &y)| x * y)
+                .sum();
+            let min_sim = (min_kk_dot + min_temp_dot + min_shaath_dot) / (3.0 * chroma_norm);
+
+            let root_score = maj_sim + min_sim;
+
+            if maj_sim > max_overall_similarity {
+                max_overall_similarity = maj_sim;
+            }
+            if min_sim > max_overall_similarity {
+                max_overall_similarity = min_sim;
             }
 
-            if similarity > max_similarity {
-                max_similarity = similarity;
-                best_key = key_name.clone();
-            }
-        }
-
-        // Post-processing and correction based on Advanced Musicology Rules
-        let parts: Vec<&str> = best_key.split_whitespace().collect();
-        if parts.len() < 2 {
-            return best_key;
-        }
-        let root_str = parts[0];
-        let is_major = parts[1] == "Major";
-        let root_idx = pitch_names.iter().position(|&r| r == root_str).unwrap_or(0);
-
-        let mut final_root_idx = root_idx;
-        let mut final_is_major = is_major;
-
-        // Rule A: Mediant/Submediant Major Corrector (e.g. A Minor -> F Major)
-        // If detected as X Minor, but the submediant Y = (X + 8) % 12 (F for A) has higher energy to X,
-        // it is highly likely to be Y Major.
-        if !is_major {
-            let submediant_idx = (root_idx + 8) % 12;
-            if chroma[submediant_idx] > 1.05 * chroma[root_idx] {
-                final_root_idx = submediant_idx;
-                final_is_major = true;
-            } else {
-                // Phrygian-second Mediant Corrector:
-                // In X Minor, the second degree is (X + 2) % 12 (B for A), and the flat-second is (X + 1) % 12 (Bb for A).
-                // If the flat-second is much stronger than the second degree, it means Bb is in key and B is out,
-                // which strongly indicates Y Major ((X + 8) % 12 Major, i.e., F Major) where Bb is the perfect fourth.
-                let flat_second_idx = (root_idx + 1) % 12;
-                let second_idx = (root_idx + 2) % 12;
-                if chroma[flat_second_idx] > 1.35 * chroma[second_idx] {
-                    final_root_idx = submediant_idx;
-                    final_is_major = true;
-                }
-            }
-        }
-
-        // Rule B: Tonal Third Discriminator (大小调硬核判定器)
-        // Check the exact ratio of minor third (root + 3) vs major third (root + 4)
-        let energy_minor_third = chroma[(final_root_idx + 3) % 12];
-        let energy_major_third = chroma[(final_root_idx + 4) % 12];
-        if final_is_major {
-            if energy_minor_third > 0.88 * energy_major_third {
-                final_is_major = false;
-            }
-        } else {
-            if energy_major_third > 1.15 * energy_minor_third {
-                final_is_major = true;
+            if root_score > max_root_score {
+                max_root_score = root_score;
+                best_root_idx = i;
             }
         }
 
-        // Rule C: Chinese Pentatonic Mode (宫/羽五声调式) Mapping
-        // If Major, check Gong Mode (宫调式): lack of 4th and 7th degrees
-        // If Minor, check Yu Mode (羽调式): lack of 2nd and 6th degrees
-        let root_name = pitch_names[final_root_idx];
-        if final_is_major {
-            let fourth_idx = (final_root_idx + 5) % 12;
-            let seventh_idx = (final_root_idx + 11) % 12;
-            let root_energy = chroma[final_root_idx].max(1e-5);
-            if (chroma[fourth_idx] + chroma[seventh_idx]) < 0.25 * root_energy {
-                return format!("{} 宫调式", root_name);
-            }
-            format!("{} Major", root_name)
-        } else {
-            let second_idx = (final_root_idx + 2) % 12;
-            let sixth_idx = (final_root_idx + 8) % 12;
-            let root_energy = chroma[final_root_idx].max(1e-5);
-            if (chroma[second_idx] + chroma[sixth_idx]) < 0.25 * root_energy {
-                return format!("{} 羽调式", root_name);
-            }
+        // Low confidence intercept to prevent G Major fallback bias in noisy / beatless environments
+        if max_overall_similarity < 0.35 {
+            return "Unknown".to_string();
+        }
+
+        let root_name = pitch_names[best_root_idx];
+
+        // Pass 2: Chinese Pentatonic Mode Mapping
+        let root_energy = chroma[best_root_idx].max(1e-5);
+        let gong_missing = chroma[(best_root_idx + 5) % 12] + chroma[(best_root_idx + 11) % 12];
+        let shang_missing = chroma[(best_root_idx + 3) % 12] + chroma[(best_root_idx + 9) % 12];
+        let jiao_missing = chroma[(best_root_idx + 1) % 12] + chroma[(best_root_idx + 7) % 12];
+        let zhi_missing = chroma[(best_root_idx + 4) % 12] + chroma[(best_root_idx + 10) % 12];
+        let yu_missing = chroma[(best_root_idx + 2) % 12] + chroma[(best_root_idx + 8) % 12];
+
+        let pentatonic_threshold = 0.25 * root_energy;
+        let mut best_pentatonic = None;
+        let mut min_missing = f32::MAX;
+
+        if gong_missing < pentatonic_threshold && gong_missing < min_missing {
+            min_missing = gong_missing;
+            best_pentatonic = Some("宫调式");
+        }
+        if shang_missing < pentatonic_threshold && shang_missing < min_missing {
+            min_missing = shang_missing;
+            best_pentatonic = Some("商调式");
+        }
+        if jiao_missing < pentatonic_threshold && jiao_missing < min_missing {
+            min_missing = jiao_missing;
+            best_pentatonic = Some("角调式");
+        }
+        if zhi_missing < pentatonic_threshold && zhi_missing < min_missing {
+            min_missing = zhi_missing;
+            best_pentatonic = Some("徵调式");
+        }
+        if yu_missing < pentatonic_threshold && yu_missing < min_missing {
+            best_pentatonic = Some("羽调式");
+        }
+
+        if let Some(mode) = best_pentatonic {
+            return format!("{} {}", root_name, mode);
+        }
+
+        // Pass 3: Tonal Third & Sixth Discriminator for Major vs Minor
+        let energy_minor = chroma[(best_root_idx + 3) % 12] + chroma[(best_root_idx + 8) % 12];
+        let energy_major = chroma[(best_root_idx + 4) % 12] + chroma[(best_root_idx + 9) % 12];
+
+        let is_minor = energy_minor > 0.90 * energy_major;
+
+        if is_minor {
             format!("{} Minor", root_name)
+        } else {
+            format!("{} Major", root_name)
         }
     }
 }

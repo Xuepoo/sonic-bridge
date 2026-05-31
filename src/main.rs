@@ -52,6 +52,7 @@ fn main() {
 
     let mut config_path = None;
     let mut use_onset = false;
+    let mut use_beat = false;
     let mut use_quiet = false;
     let mut use_render = false;
     let mut custom_threshold = None;
@@ -88,6 +89,9 @@ fn main() {
             }
         } else if args[i] == "--onset" {
             use_onset = true;
+            i += 1;
+        } else if args[i] == "--beat" {
+            use_beat = true;
             i += 1;
         } else if args[i] == "--quiet" || args[i] == "-q" {
             use_quiet = true;
@@ -130,6 +134,9 @@ fn main() {
     if use_onset {
         config.onset_mode = true;
     }
+    if use_beat {
+        config.beat_mode = true;
+    }
     if use_quiet {
         config.quiet_mode = true;
     }
@@ -171,11 +178,13 @@ fn main() {
         }
 
         let is_onset_active = config.onset_mode;
+        let is_beat_active = config.beat_mode;
         if !config.quiet_mode {
             println!(
-                "\x1b[1;36m[*]\x1b[0m Analyzing single track: \x1b[1m{}\x1b[0m (onset mode: \x1b[32m{}\x1b[0m, step size: \x1b[32m{:.1}s\x1b[0m) ...",
+                "\x1b[1;36m[*]\x1b[0m Analyzing single track: \x1b[1m{}\x1b[0m (onset mode: \x1b[32m{}\x1b[0m, beat mode: \x1b[32m{}\x1b[0m, step size: \x1b[32m{:.1}s\x1b[0m) ...",
                 audio_path.display(),
                 is_onset_active,
+                is_beat_active,
                 config.step_size
             );
         }
@@ -204,6 +213,8 @@ fn main() {
 
                 let interval_header = if is_onset_active {
                     "## 2. Spatiotemporal Track Analysis (Adaptive Onset Intervals)"
+                } else if is_beat_active {
+                    "## 2. Spatiotemporal Track Analysis (Beat-Synchronous Resampling)"
                 } else {
                     &format!(
                         "## 2. Spatiotemporal Track Analysis ({:.1}-Second Intervals)",
@@ -343,6 +354,7 @@ fn print_usage() {
     println!("\x1b[1;33mOPTIONS:\x1b[0m");
     println!("  \x1b[32m--onset\x1b[0m          Enable event-driven adaptive interval segmenting (Onset detection)");
     println!("                   (Defaults to fixed step time segmenting if omitted)");
+    println!("  \x1b[32m--beat\x1b[0m           Enable beat-synchronous resampling (Beat tracking segmentation)");
     println!("  \x1b[32m--threshold <val>\x1b[0m Overwrite default Onset sensitivity threshold (e.g., 1.5 to filter noise)");
     println!("  \x1b[32m--quiet, -q\x1b[0m      Mute outputting markdown report preview in standard stdout");
     println!("  \x1b[32m--config <path>\x1b[0m  Specify target TOML config file path (Override default XDG paths)");

@@ -115,6 +115,17 @@ impl SonicPipeline {
             temp.sort();
             temp.dedup();
             split_points = temp;
+        } else if config.beat_mode {
+            let beat_duration = 60.0 / estimated_bpm;
+            let frames_per_beat = (beat_duration / frame_duration).round() as usize;
+            let mut temp = vec![0];
+            let mut current_frame = frames_per_beat;
+            while current_frame < spectrogram.len() {
+                temp.push(current_frame);
+                current_frame += frames_per_beat;
+            }
+            temp.push(spectrogram.len());
+            split_points = temp;
         }
 
         // 预扫描计算全局最大 RMS 动态，以供局部相对 RMS (Relative RMS) 分类使用
@@ -134,7 +145,7 @@ impl SonicPipeline {
         let mut interval_idx = 0;
 
         while frame_idx < spectrogram.len() {
-            let end_frame = if config.onset_mode {
+            let end_frame = if config.onset_mode || config.beat_mode {
                 split_points
                     .iter()
                     .copied()
@@ -189,7 +200,7 @@ impl SonicPipeline {
                 counts += 1;
             }
 
-            let (t_start, t_end) = if config.onset_mode {
+            let (t_start, t_end) = if config.onset_mode || config.beat_mode {
                 let start_time = frame_idx as f32 * frame_duration;
                 let end_time = (end_frame as f32 * frame_duration).min(duration);
                 (start_time, end_time)

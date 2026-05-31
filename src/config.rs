@@ -8,6 +8,7 @@ use std::path::PathBuf;
 pub struct SonicConfig {
     pub step_size: f32,
     pub onset_mode: bool,
+    pub beat_mode: bool,
     pub onset_threshold: f32,
     pub cache_dir: String,
     pub quiet_mode: bool,
@@ -18,6 +19,7 @@ impl Default for SonicConfig {
         Self {
             step_size: 5.0,
             onset_mode: false,
+            beat_mode: false,
             onset_threshold: 0.5,
             cache_dir: get_xdg_cache_path().to_str().unwrap_or("").to_string(),
             quiet_mode: false,

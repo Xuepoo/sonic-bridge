@@ -4,6 +4,15 @@ All notable changes to the `sonic-bridge` core library and CLI will be documente
 
 ---
 
+## [0.3.8] - 2026-05-31
+
+### Added
+- **Beat-Synchronous Resampling Mode (Scheme C)**: Implemented tempo-synced feature integration. Enabled by a new CLI `--beat` option or TOML `beat_mode = true` configuration, it automatically computes precise beat-interval boundaries according to the dynamically estimated BPM to perform rhythmically aligned music appreciation.
+- **TDD Verification Suite for Beat Mode**: Added `tests/beat_tests.rs` to assert correct beat extraction, boundary slicing, and consecutive identical phrase block mergers.
+
+### Changed
+- **CLI Manual and Help Page Update**: Documented the new `--beat` flag within `--help` print manuals.
+
 ## [0.3.7] - 2026-05-31
 
 ### Added

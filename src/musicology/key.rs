@@ -19,12 +19,12 @@ impl KeyDetector {
             "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
         ];
 
-        // Krumhansl-Kessler key profiles
+        // Adjusted Krumhansl-Kessler key profiles to emphasize b3 and b6 for Minor, and b3 reduction for Major
         let base_major = vec![
-            6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88,
+            6.35, 2.23, 3.48, 1.50, 4.80, 4.09, 2.52, 5.19, 2.00, 3.66, 2.29, 2.88,
         ];
         let base_minor = vec![
-            6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17,
+            6.33, 2.68, 3.52, 6.20, 1.50, 3.53, 2.54, 4.75, 4.80, 2.69, 3.34, 3.17,
         ];
 
         let mut templates = Vec::with_capacity(24);

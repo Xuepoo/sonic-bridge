@@ -47,34 +47,154 @@ impl SonicPipeline {
         let engine = StftEngine::new(window_size, hop_size);
         let spectrogram = engine.compute(&samples)?;
 
-        // 3. 计算自适应全局 BPM (BPM Estimator based on Onset Interval Autocorrelation / Median)
+        // 3. 计算自适应全局 BPM (BPM Estimator based on Multi-Histogram Confidence Voting)
+        let frame_duration = hop_size as f32 / sr;
+
         let bpm_detector = crate::dsp::onset::OnsetDetector::new(config.onset_threshold);
         let bpm_boundaries = bpm_detector.detect_boundaries(&spectrogram);
-        let frame_duration = hop_size as f32 / sr;
-        let mut boundary_times: Vec<f32> = bpm_boundaries
-            .iter()
-            .map(|&f| f as f32 * frame_duration)
-            .collect();
-        boundary_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut bpm_candidates = Vec::new();
-        for idx in 1..boundary_times.len() {
-            let diff = boundary_times[idx] - boundary_times[idx - 1];
-            if diff > 0.15f32 && diff < 2.5f32 {
-                let mut candidate_bpm = 60.0f32 / diff;
-                // 归一化折算到 60.0 - 180.0 正常人耳听觉拍频区间
-                while candidate_bpm < 60.0f32 {
-                    candidate_bpm *= 2.0;
+        // 构建 IOI (Inter-Onset Interval) 直方图桶进行投票
+        let mut ioi_histogram = [0.0f32; 28];
+        if !bpm_boundaries.is_empty() {
+            let boundary_times: Vec<f32> = bpm_boundaries
+                .iter()
+                .map(|&f| f as f32 * frame_duration)
+                .collect();
+            for i in 0..boundary_times.len() {
+                // 相邻间隔
+                if i + 1 < boundary_times.len() {
+                    let diff = boundary_times[i + 1] - boundary_times[i];
+                    if diff > 0.15 && diff < 2.5 {
+                        let mut b = 60.0 / diff;
+                        while b < 60.0 {
+                            b *= 2.0;
+                        }
+                        while b > 200.0 {
+                            b /= 2.0;
+                        }
+                        let bin_idx = (((b - 60.0) / 5.0).floor() as usize).min(27);
+                        ioi_histogram[bin_idx] += 1.0;
+                    }
                 }
-                while candidate_bpm > 180.0f32 {
-                    candidate_bpm /= 2.0;
+                // 跨拍间隔
+                if i + 2 < boundary_times.len() {
+                    let diff = boundary_times[i + 2] - boundary_times[i];
+                    if diff > 0.15 && diff < 2.5 {
+                        let mut b = 60.0 / diff;
+                        while b < 60.0 {
+                            b *= 2.0;
+                        }
+                        while b > 200.0 {
+                            b /= 2.0;
+                        }
+                        let bin_idx = (((b - 60.0) / 5.0).floor() as usize).min(27);
+                        ioi_histogram[bin_idx] += 0.5; // 跨拍作为辅助特征
+                    }
                 }
-                bpm_candidates.push(candidate_bpm);
             }
         }
-        let estimated_bpm = if !bpm_candidates.is_empty() {
-            bpm_candidates.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            bpm_candidates[bpm_candidates.len() / 2]
+
+        // 对直方图进行一阶高斯平滑
+        let mut smooth_hist = [0.0f32; 28];
+        for idx in 0..28 {
+            let left = if idx > 0 { ioi_histogram[idx - 1] } else { 0.0 };
+            let right = if idx + 1 < 28 {
+                ioi_histogram[idx + 1]
+            } else {
+                0.0
+            };
+            smooth_hist[idx] = left * 0.25 + ioi_histogram[idx] * 0.5 + right * 0.25;
+        }
+
+        // 提取能量包络并做零均值自相关
+        let envelope: Vec<f32> = spectrogram
+            .iter()
+            .map(|frame| {
+                let sum_power: f32 = frame.iter().map(|&x| x * x).sum();
+                (sum_power / frame.len() as f32).sqrt()
+            })
+            .collect();
+
+        let estimated_bpm = if envelope.len() >= 64 {
+            let mean: f32 = envelope.iter().sum::<f32>() / envelope.len() as f32;
+            let zero_mean_env: Vec<f32> = envelope.iter().map(|&x| x - mean).collect();
+
+            // Lag 范围 60 - 200 BPM -> 1.0s 到 0.3s
+            let max_lag = (1.25 / frame_duration).round() as usize; // 下限可到 48 BPM
+            let min_lag = (0.28 / frame_duration).round() as usize; // 上限可到 214 BPM
+
+            let mut corr_values = vec![0.0f32; max_lag + 1];
+            let mut max_corr = -1e9f32;
+
+            #[allow(clippy::needless_range_loop)]
+            for lag in min_lag..=max_lag {
+                let mut sum = 0.0f32;
+                let mut count = 0;
+                for i in 0..(zero_mean_env.len() - lag) {
+                    sum += zero_mean_env[i] * zero_mean_env[i + lag];
+                    count += 1;
+                }
+                if count > 0 {
+                    let corr = sum / count as f32;
+                    corr_values[lag] = corr;
+                    if corr > max_corr {
+                        max_corr = corr;
+                    }
+                }
+            }
+
+            // 归一化自相关系数以用于加权打分
+            let mut corr_norm = vec![0.0f32; max_lag + 1];
+            if max_corr > 1e-4 {
+                #[allow(clippy::needless_range_loop)]
+                for lag in min_lag..=max_lag {
+                    corr_norm[lag] = (corr_values[lag] / max_corr).max(0.0);
+                }
+            }
+
+            // 置信度模型投票决策
+            let mut best_lag = 0;
+            let mut max_confidence = -1e9f32;
+
+            #[allow(clippy::needless_range_loop)]
+            for lag in min_lag..=max_lag {
+                let bpm_cand = 60.0 / (lag as f32 * frame_duration);
+                let mut mapped_bpm = bpm_cand;
+                while mapped_bpm < 60.0 {
+                    mapped_bpm *= 2.0;
+                }
+                while mapped_bpm > 200.0 {
+                    mapped_bpm /= 2.0;
+                }
+
+                let bin_idx = (((mapped_bpm - 60.0) / 5.0).floor() as usize).min(27);
+                let hist_vote = smooth_hist[bin_idx];
+
+                // 置信度公式：自相关值 * (1.0 + 1.2 * 直方图平滑因子)
+                let mut confidence = corr_norm[lag] * (1.0 + 1.2 * hist_vote);
+
+                // 适度向更主干、中低速 [60, 120] 区间进行八度偏置纠正
+                if bpm_cand > 120.0 {
+                    confidence *= 0.90;
+                }
+
+                if confidence > max_confidence {
+                    max_confidence = confidence;
+                    best_lag = lag;
+                }
+            }
+
+            let mut bpm = 60.0 / (best_lag as f32 * frame_duration);
+
+            // 最终锁定健康节奏区间
+            while bpm < 55.0 {
+                bpm *= 2.0;
+            }
+            while bpm > 210.0 {
+                bpm /= 2.0;
+            }
+
+            bpm
         } else {
             120.0f32 // Fallback BPM
         };
@@ -164,6 +284,7 @@ impl SonicPipeline {
             // 4. 计算区间平均特征
             let mut sum_rms = 0.0f32;
             let mut sum_centroid = 0.0f32;
+            let mut sum_flatness = 0.0f32;
             let mut sum_chroma = vec![0.0f32; 12];
             let mut counts = 0;
 
@@ -183,6 +304,53 @@ impl SonicPipeline {
                 let centroid = if den > 0.0 { num / den } else { 0.0 };
                 sum_centroid += centroid;
 
+                // 频谱平坦度 (Spectral Flatness) 计算，量化稀疏极简编曲
+                let mut sum_log = 0.0f64;
+                let mut sum_val = 0.0f32;
+                let eps = 1e-7f64;
+                for &mag in frame {
+                    sum_log += (mag as f64 + eps).ln();
+                    sum_val += mag;
+                }
+                let mean_log = sum_log / frame.len() as f64;
+                let geom_mean = mean_log.exp() as f32;
+                let arith_mean = sum_val / frame.len() as f32;
+                let flatness = if arith_mean > 0.0 {
+                    geom_mean / arith_mean
+                } else {
+                    0.0
+                };
+                sum_flatness += flatness;
+
+                // 物理旋律音高追踪器 (Melodic Pitch Tracker)
+                let bin_300 = (300.0 / (sr / window_size as f32)).round() as usize; // ~14
+                let bin_1200 = (1200.0 / (sr / window_size as f32)).round() as usize; // ~56
+                let mut max_mag = 0.0f32;
+                let mut melody_bin = 0;
+                let mut sum_mag_in_band = 0.0f32;
+                #[allow(clippy::needless_range_loop)]
+                for bin in bin_300..=bin_1200 {
+                    let mag = frame[bin];
+                    sum_mag_in_band += mag;
+                    if mag > max_mag {
+                        max_mag = mag;
+                        melody_bin = bin;
+                    }
+                }
+
+                let mean_mag_in_band = sum_mag_in_band / (bin_1200 - bin_300 + 1) as f32;
+                let mut melody_pitch_class = -1;
+
+                // 置信度阈值判定：最强音高能量超出平均本底能量的 2.2 倍，方认定为单一纯正的人声/主旋律线条
+                if max_mag > mean_mag_in_band * 2.2 && melody_bin > 0 {
+                    let melody_freq = melody_bin as f32 * (sr / window_size as f32);
+                    let melody_midi = 69.0 + 12.0 * (melody_freq / 440.0).log2();
+                    let pc = (melody_midi.round() as i32) % 12;
+                    if pc >= 0 {
+                        melody_pitch_class = pc;
+                    }
+                }
+
                 // 色度向量合并 (基于 200Hz - 2kHz 审美带通投影，过滤低频共振与高频刺耳物，聚焦旋律音高)
                 for (bin, &mag) in frame.iter().enumerate() {
                     let freq = bin as f32 * (sr / window_size as f32);
@@ -191,8 +359,14 @@ impl SonicPipeline {
                         let midi_pitch = 69.0 + 12.0 * (freq / 440.0).log2();
                         let pitch_class = (midi_pitch.round() as i32) % 12;
                         if pitch_class >= 0 {
-                            sum_chroma[pitch_class as usize] += mag;
-                            global_chroma[pitch_class as usize] += mag;
+                            // 旋律线加权：如果该音高被判定为主旋律骨架，赋予其 3.0 倍的 Melodic Boosting 权重
+                            let weight = if pitch_class == melody_pitch_class {
+                                3.0f32
+                            } else {
+                                1.0f32
+                            };
+                            sum_chroma[pitch_class as usize] += mag * weight;
+                            global_chroma[pitch_class as usize] += mag * weight;
                         }
                     }
                 }
@@ -212,6 +386,7 @@ impl SonicPipeline {
 
             let mean_rms = sum_rms / counts as f32;
             let mean_centroid = sum_centroid / counts as f32;
+            let mean_flatness = sum_flatness / counts as f32;
 
             // 计算分片中的时域 Peak 值以求出 Crest Factor（波峰因数），量化混音的冲击感与呼吸感
             let start_sample = (t_start * sr) as usize;
@@ -231,8 +406,11 @@ impl SonicPipeline {
                 0.0
             };
 
-            // A. 自适应动态电平映射（通过 relative_rms 和 crest_factor 联合映射，优雅解决现代音乐砖墙限幅饱满带来的 Fortissimo 霸屏 Bug）
+            // A. 自适应动态电平映射（通过 relative_rms、crest_factor 与 mean_flatness 频谱平坦度联合映射）
+            // 稀疏编曲（如 We Will Rock You）能量集中少数频段，flatness 显著偏低 (< 0.12)，据此进行动态电平抑制，纠正语义错位
             let relative_rms = mean_rms / global_max_rms;
+            let is_sparse = mean_flatness < 0.12f32;
+
             let dynamic_desc = if relative_rms < 0.01 {
                 "Silent/Near-Silent"
             } else if relative_rms < 0.12 {
@@ -240,16 +418,30 @@ impl SonicPipeline {
             } else if relative_rms < 0.35 {
                 "Soft & Intimate (Piano)"
             } else if relative_rms < 0.65 {
-                "Moderately Intense (Mezzo-Forte)"
-            } else if relative_rms < 0.85 {
-                "Loud & Energetic (Forte)"
-            } else {
-                // 极高电平区：如果 Crest Factor 过低，说明是被 maximizer 压缩到极限的响度，标记为 Loud & Dense
-                // 如果 Crest Factor 较高，说明是具备强烈 Transient 冲击感的物理爆发点，标记为 Fortissimo
-                if crest_factor < 2.5 {
-                    "Loud & Dense (Forte)"
+                if is_sparse {
+                    "Soft & Intimate (Piano)"
                 } else {
-                    "Exploding Intensity (Fortissimo)"
+                    "Moderately Intense (Mezzo-Forte)"
+                }
+            } else if relative_rms < 0.85 {
+                if is_sparse {
+                    "Moderately Intense (Mezzo-Forte)"
+                } else {
+                    "Loud & Energetic (Forte)"
+                }
+            } else {
+                if crest_factor < 2.5 {
+                    if is_sparse {
+                        "Moderately Intense (Mezzo-Forte)"
+                    } else {
+                        "Loud & Dense (Forte)"
+                    }
+                } else {
+                    if is_sparse {
+                        "Loud & Energetic (Forte)"
+                    } else {
+                        "Exploding Intensity (Fortissimo)"
+                    }
                 }
             };
 

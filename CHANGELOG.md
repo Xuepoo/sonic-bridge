@@ -4,6 +4,16 @@ All notable changes to the `sonic-bridge` core library and CLI will be documente
 
 ---
 
+## [0.4.0] - 2026-05-31
+
+### Added
+- **BPM Confidence Model (Histogram & Autocorrelation Voting)**: Integrated a multi-histogram tempo classifier combining Zero-Mean Autocorrelation with Inter-Onset Interval (IOI) histogram peaks. Solved octave tempo ambiguities and stabilized rhythm tracking on extreme rhythmic profiles.
+- **Melodic Weighting Pitch Tracker**: Implemented a real-time, low-overhead F0 pitch class estimator restricting spectral tracking to the human vocal core resonance band (300Hz-1200Hz), enabling **3.0x Melodic Boosting** in Chroma projection. Resolves Major/Minor key confusion under heavy arrangement backings.
+- **Spectral Flatness Arranged Density 修剪**: Integrated Spectral Flatness (Wiener Entropy) computation inside sub-segment calculations to dynamically identify sparse and minimal body percussion tracks, automatically mapping and correcting dynamic level overflows to realistic musicology levels.
+
+### Changed
+- **CLI Global Overrides**: Updated manuals to reflect the fully stabilized Scheme C beat tracking algorithms now under the hood.
+
 ## [0.3.8] - 2026-05-31
 
 ### Added

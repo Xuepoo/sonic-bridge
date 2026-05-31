@@ -164,6 +164,7 @@ impl SonicPipeline {
             // 置信度模型投票决策
             let mut best_lag = 0;
             let mut max_confidence = -1e9f32;
+            let max_vote = smooth_hist.iter().copied().fold(0.0f32, f32::max).max(1.0);
 
             #[allow(clippy::needless_range_loop)]
             for lag in min_lag..=max_lag {
@@ -173,7 +174,7 @@ impl SonicPipeline {
                 } else {
                     40
                 };
-                let hist_vote = smooth_hist[bin_idx];
+                let hist_vote = smooth_hist[bin_idx] / max_vote;
 
                 // 置信度公式：自相关值 * (1.0 + 1.2 * 直方图平滑因子) * peak_coeff
                 let mut confidence = corr_norm[lag] * (1.0 + 1.2 * hist_vote) * peak_coeff;
@@ -189,6 +190,15 @@ impl SonicPipeline {
                     best_lag = lag;
                 }
             }
+
+            let mut diff_sum = 0.0f32;
+            for i in 1..envelope.len() {
+                diff_sum += (envelope[i] - envelope[i - 1]).powi(2);
+            }
+            let diff_variance = diff_sum / (envelope.len() - 1) as f32;
+
+            let duration = spectrogram.len() as f32 * frame_duration;
+            let onset_density = bpm_boundaries.len() as f32 / duration;
 
             let mut best_bpm = 60.0 / (best_lag as f32 * frame_duration);
 
@@ -216,22 +226,36 @@ impl SonicPipeline {
             }
 
             // Metric Up-shifter & 3/4 Waltz Corrector:
-            if best_bpm < 75.0 {
+            // 慢速古典独奏保护哨 (Classical Guard)：对于 diff_variance < 0.035 的曲目（无强冲击鼓点、力度平滑），禁止上折，防止 octave 翻倍错误
+            if best_bpm < 75.0 && diff_variance >= 0.035 {
                 let double_bpm = best_bpm * 2.0;
                 let triple_bpm = best_bpm * 3.0;
+                let bin_idx_double = if (50.0..=250.0).contains(&double_bpm) {
+                    (((double_bpm - 50.0) / 5.0).floor() as usize).min(40)
+                } else {
+                    40
+                };
                 let bin_idx_triple = if (50.0..=250.0).contains(&triple_bpm) {
                     (((triple_bpm - 50.0) / 5.0).floor() as usize).min(40)
                 } else {
                     40
                 };
+                let double_vote = smooth_hist[bin_idx_double];
                 let triple_vote = smooth_hist[bin_idx_triple];
-                let total_votes = smooth_hist.iter().sum::<f32>().max(1.0);
 
-                if triple_vote > 0.08 * total_votes {
-                    best_bpm = triple_bpm;
+                let half_lag = best_lag / 2;
+                let half_corr = if half_lag <= max_lag {
+                    corr_norm[half_lag]
                 } else {
+                    0.0
+                };
+
+                if triple_vote > 0.35 * double_vote && triple_vote > 1.0 {
+                    best_bpm = triple_bpm;
+                } else if double_vote > 1.5 || half_corr > 0.25 {
                     best_bpm = double_bpm;
                 }
+                // Otherwise, keep best_bpm as is (no upshift for truly slow classical pieces like Ballade No.1)
             }
 
             // 最终锁定健康节奏区间
@@ -243,15 +267,6 @@ impl SonicPipeline {
             }
 
             // Ambient / beatless free rhythm fallback detection
-            let mut diff_sum = 0.0f32;
-            for i in 1..envelope.len() {
-                diff_sum += (envelope[i] - envelope[i - 1]).powi(2);
-            }
-            let diff_variance = diff_sum / (envelope.len() - 1) as f32;
-
-            let duration = spectrogram.len() as f32 * frame_duration;
-            let onset_density = bpm_boundaries.len() as f32 / duration;
-
             if max_confidence < 0.28 || onset_density < 0.20 || diff_variance < 0.015 {
                 -1.0f32
             } else {

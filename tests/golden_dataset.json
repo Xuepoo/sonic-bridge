@@ -1,0 +1,44 @@
+[
+  {
+    "filepath": "/mnt/data/Music/Jazz/Bill Evans - Waltz for Debby.flac",
+    "target_bpm": 184.6,
+    "target_key": "C Major",
+    "allowed_equivalents": ["C Major", "A Minor", "F Major"],
+    "primary_style": "Jazz/Rubato Improvisation"
+  },
+  {
+    "filepath": "/mnt/data/Music/Rock/Pink Floyd - Comfortably Numb.mp3",
+    "target_bpm": 129.2,
+    "target_key": "D Major",
+    "allowed_equivalents": ["D Major", "B Minor"],
+    "primary_style": "Pop/Rock/Electronic"
+  },
+  {
+    "filepath": "/mnt/data/Music/ChineseFolk/民乐 - 紫竹调.flac",
+    "target_bpm": 161.5,
+    "target_key": "B 羽调式",
+    "allowed_equivalents": ["B 羽调式", "D 宫调式"],
+    "primary_style": "Traditional Chinese Folk/Modal"
+  },
+  {
+    "filepath": "/mnt/data/Music/Classical/Ludwig van Beethoven、Pianissimo Brothers - Moonlight Sonata.flac",
+    "target_bpm": 184.6,
+    "target_key": "C# Minor",
+    "allowed_equivalents": ["C# Minor", "E Major"],
+    "primary_style": "Jazz/Rubato Improvisation"
+  },
+  {
+    "filepath": "/mnt/data/Music/Avicii - Levels.mp3",
+    "target_bpm": 123.0,
+    "target_key": "E Major",
+    "allowed_equivalents": ["E Major", "C# Minor"],
+    "primary_style": "Pop/Rock/Electronic"
+  },
+  {
+    "filepath": "/mnt/data/Music/Miles Davis - So What.mp3",
+    "target_bpm": 184.6,
+    "target_key": "C Major",
+    "allowed_equivalents": ["C Major", "A Minor"],
+    "primary_style": "Jazz/Rubato Improvisation"
+  }
+]

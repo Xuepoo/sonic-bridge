@@ -841,37 +841,92 @@ impl SpecializedDetector for ChinesePentatonicDetector {
             let pentatonic_threshold = 0.27 * root_energy_val;
 
             if gong_missing < pentatonic_threshold {
+                let active_sum = chroma[idx]
+                    + chroma[(idx + 2) % 12]
+                    + chroma[(idx + 4) % 12]
+                    + chroma[(idx + 7) % 12]
+                    + chroma[(idx + 9) % 12];
+                let share = if active_sum > 1e-4 {
+                    chroma[idx] / active_sum
+                } else {
+                    0.2
+                };
+                let boost = 0.70 + 1.5 * share;
                 key_candidates.push(KeyHypothesis {
                     key: format!("{} 宫调式", root_name),
-                    confidence: 0.88 * (1.0 - gong_missing / pentatonic_threshold),
+                    confidence: 0.88 * (1.0 - gong_missing / pentatonic_threshold) * boost,
                     source: "ChinesePentatonicDetector",
                 });
             }
             if shang_missing < pentatonic_threshold {
+                let active_sum = chroma[idx]
+                    + chroma[(idx + 2) % 12]
+                    + chroma[(idx + 5) % 12]
+                    + chroma[(idx + 7) % 12]
+                    + chroma[(idx + 10) % 12];
+                let share = if active_sum > 1e-4 {
+                    chroma[idx] / active_sum
+                } else {
+                    0.2
+                };
+                let boost = 0.70 + 1.5 * share;
                 key_candidates.push(KeyHypothesis {
                     key: format!("{} 商调式", root_name),
-                    confidence: 0.88 * (1.0 - shang_missing / pentatonic_threshold),
+                    confidence: 0.88 * (1.0 - shang_missing / pentatonic_threshold) * boost,
                     source: "ChinesePentatonicDetector",
                 });
             }
             if jiao_missing < pentatonic_threshold {
+                let active_sum = chroma[idx]
+                    + chroma[(idx + 3) % 12]
+                    + chroma[(idx + 5) % 12]
+                    + chroma[(idx + 8) % 12]
+                    + chroma[(idx + 10) % 12];
+                let share = if active_sum > 1e-4 {
+                    chroma[idx] / active_sum
+                } else {
+                    0.2
+                };
+                let boost = 0.70 + 1.5 * share;
                 key_candidates.push(KeyHypothesis {
                     key: format!("{} 角调式", root_name),
-                    confidence: 0.88 * (1.0 - jiao_missing / pentatonic_threshold),
+                    confidence: 0.88 * (1.0 - jiao_missing / pentatonic_threshold) * boost,
                     source: "ChinesePentatonicDetector",
                 });
             }
             if zhi_missing < pentatonic_threshold {
+                let active_sum = chroma[idx]
+                    + chroma[(idx + 2) % 12]
+                    + chroma[(idx + 5) % 12]
+                    + chroma[(idx + 7) % 12]
+                    + chroma[(idx + 9) % 12];
+                let share = if active_sum > 1e-4 {
+                    chroma[idx] / active_sum
+                } else {
+                    0.2
+                };
+                let boost = 0.70 + 1.5 * share;
                 key_candidates.push(KeyHypothesis {
                     key: format!("{} 徵调式", root_name),
-                    confidence: 0.88 * (1.0 - zhi_missing / pentatonic_threshold),
+                    confidence: 0.88 * (1.0 - zhi_missing / pentatonic_threshold) * boost,
                     source: "ChinesePentatonicDetector",
                 });
             }
             if yu_missing < pentatonic_threshold {
+                let active_sum = chroma[idx]
+                    + chroma[(idx + 3) % 12]
+                    + chroma[(idx + 5) % 12]
+                    + chroma[(idx + 7) % 12]
+                    + chroma[(idx + 10) % 12];
+                let share = if active_sum > 1e-4 {
+                    chroma[idx] / active_sum
+                } else {
+                    0.2
+                };
+                let boost = 0.70 + 1.5 * share;
                 key_candidates.push(KeyHypothesis {
                     key: format!("{} 羽调式", root_name),
-                    confidence: 0.88 * (1.0 - yu_missing / pentatonic_threshold),
+                    confidence: 0.88 * (1.0 - yu_missing / pentatonic_threshold) * boost,
                     source: "ChinesePentatonicDetector",
                 });
             }
@@ -1335,9 +1390,10 @@ impl EnsembleSelector {
             let double_vote = features.smooth_hist[bin_idx_double];
             let triple_vote = features.smooth_hist[bin_idx_triple];
 
-            if triple_vote > 0.30 * double_vote
-                && triple_vote > 0.8
-                && features.diff_variance >= 0.035
+            if style.triple_meter
+                || (triple_vote > 0.30 * double_vote
+                    && triple_vote > 0.8
+                    && features.diff_variance >= 0.035)
             {
                 best_bpm = triple_bpm;
             }

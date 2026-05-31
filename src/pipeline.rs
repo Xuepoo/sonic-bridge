@@ -2,8 +2,8 @@ use crate::alignment::dtw::DtwAligner;
 use crate::config::SonicConfig;
 use crate::decoder::AudioDecoder;
 use crate::dsp::spectrogram::StftEngine;
+use crate::dsp::style::{StyleClassifier, StyleVector};
 use crate::musicology::chroma::ChordClassifier;
-use crate::musicology::key::KeyDetector;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -14,6 +14,8 @@ pub struct GlobalMetadata {
     pub estimated_bpm: f32,
     pub estimated_global_key: String,
     pub tempo_feeling: String,
+    pub confidence: f32,
+    pub primary_style: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -47,13 +49,13 @@ impl SonicPipeline {
         let engine = StftEngine::new(window_size, hop_size);
         let spectrogram = engine.compute(&samples)?;
 
-        // 3. 计算自适应全局 BPM (BPM Estimator based on Multi-Histogram Confidence Voting)
+        // 3. 准备特征与包络信息
         let frame_duration = hop_size as f32 / sr;
 
         let bpm_detector = crate::dsp::onset::OnsetDetector::new(config.onset_threshold);
         let bpm_boundaries = bpm_detector.detect_boundaries(&spectrogram);
 
-        // 构建 IOI (Inter-Onset Interval) 直方图桶进行投票
+        // 构建 IOI 直方图桶进行投票
         let mut ioi_histogram = [0.0f32; 41];
         if !bpm_boundaries.is_empty() {
             let boundary_times: Vec<f32> = bpm_boundaries
@@ -61,7 +63,6 @@ impl SonicPipeline {
                 .map(|&f| f as f32 * frame_duration)
                 .collect();
             for i in 0..boundary_times.len() {
-                // 相邻间隔
                 if i + 1 < boundary_times.len() {
                     let diff = boundary_times[i + 1] - boundary_times[i];
                     if diff > 0.15 && diff < 2.5 {
@@ -72,14 +73,13 @@ impl SonicPipeline {
                         }
                     }
                 }
-                // 跨拍间隔
                 if i + 2 < boundary_times.len() {
                     let diff = boundary_times[i + 2] - boundary_times[i];
                     if diff > 0.15 && diff < 2.5 {
                         let b = 60.0 / diff;
                         if (50.0..=250.0).contains(&b) {
                             let bin_idx = (((b - 50.0) / 5.0).floor() as usize).min(40);
-                            ioi_histogram[bin_idx] += 0.5; // 跨拍作为辅助特征
+                            ioi_histogram[bin_idx] += 0.5;
                         }
                     }
                 }
@@ -98,7 +98,7 @@ impl SonicPipeline {
             smooth_hist[idx] = left * 0.25 + ioi_histogram[idx] * 0.5 + right * 0.25;
         }
 
-        // 提取能量包络并做移动平均平滑，以提高长周期（慢速 tempo）自相关的稳健性
+        // 提取能量包络并做移动平均平滑
         let raw_envelope: Vec<f32> = spectrogram
             .iter()
             .map(|frame| {
@@ -116,13 +116,25 @@ impl SonicPipeline {
             envelope[i] = sum / (end - start + 1) as f32;
         }
 
-        let estimated_bpm = if envelope.len() >= 64 {
+        let mut precomputed = PrecomputedFeatures {
+            envelope: envelope.clone(),
+            diff_variance: 0.0,
+            onset_density: bpm_boundaries.len() as f32 / duration.max(1.0),
+            smooth_hist,
+            frame_duration,
+            max_confidence: 0.0,
+            best_lag: 0,
+            corr_norm: Vec::new(),
+            variance: 0.0,
+            peak_coeff: 0.0,
+        };
+
+        if envelope.len() >= 64 {
             let mean: f32 = envelope.iter().sum::<f32>() / envelope.len() as f32;
             let zero_mean_env: Vec<f32> = envelope.iter().map(|&x| x - mean).collect();
 
-            // Lag 范围 60 - 200 BPM -> 1.0s 到 0.3s
-            let max_lag = (1.25 / frame_duration).round() as usize; // 下限可到 48 BPM
-            let min_lag = (0.28 / frame_duration).round() as usize; // 上限可到 214 BPM
+            let max_lag = (1.25 / frame_duration).round() as usize;
+            let min_lag = (0.28 / frame_duration).round() as usize;
 
             let mut corr_values = vec![0.0f32; max_lag + 1];
             let mut max_corr = -1e9f32;
@@ -144,7 +156,6 @@ impl SonicPipeline {
                 }
             }
 
-            // 归一化自相关系数以用于加权打分
             let mut corr_norm = vec![0.0f32; max_lag + 1];
             if max_corr > 1e-4 {
                 #[allow(clippy::needless_range_loop)]
@@ -161,7 +172,6 @@ impl SonicPipeline {
                 0.0
             };
 
-            // 置信度模型投票决策
             let mut best_lag = 0;
             let mut max_confidence = -1e9f32;
             let max_vote = smooth_hist.iter().copied().fold(0.0f32, f32::max).max(1.0);
@@ -175,11 +185,8 @@ impl SonicPipeline {
                     40
                 };
                 let hist_vote = smooth_hist[bin_idx] / max_vote;
-
-                // 置信度公式：自相关值 * (1.0 + 1.2 * 直方图平滑因子) * peak_coeff
                 let mut confidence = corr_norm[lag] * (1.0 + 1.2 * hist_vote) * peak_coeff;
 
-                // 人性化舒适节奏偏好曲线 (log-Gaussian centered at 115 BPM, width ln(2))
                 let bpm_ratio = bpm_cand / 115.0;
                 let log_ratio = bpm_ratio.ln();
                 let comfort_weight = (-0.5 * (log_ratio / std::f32::consts::LN_2).powi(2)).exp();
@@ -197,84 +204,44 @@ impl SonicPipeline {
             }
             let diff_variance = diff_sum / (envelope.len() - 1) as f32;
 
-            let duration = spectrogram.len() as f32 * frame_duration;
-            let onset_density = bpm_boundaries.len() as f32 / duration;
+            precomputed.diff_variance = diff_variance;
+            precomputed.max_confidence = max_confidence;
+            precomputed.best_lag = best_lag;
+            precomputed.corr_norm = corr_norm;
+            precomputed.variance = variance;
+            precomputed.peak_coeff = peak_coeff;
+        }
 
-            let mut best_bpm = 60.0 / (best_lag as f32 * frame_duration);
-
-            // 八度谐波判定器 (Octave Harmonic Evaluator)：
-            // 如果在 2x lag 处（代表半速 BPM）同样具有较强的自相关，且直方图没有压倒性支持快速倍频，说明实际速度应该是半速！
-            let double_lag = best_lag * 2;
-            if double_lag <= max_lag && corr_norm[double_lag] > 0.45 * corr_norm[best_lag] {
-                let best_bpm_val = 60.0 / (best_lag as f32 * frame_duration);
-                let half_bpm_val = best_bpm_val / 2.0;
-                let bin_idx_best = if (50.0..=250.0).contains(&best_bpm_val) {
-                    (((best_bpm_val - 50.0) / 5.0).floor() as usize).min(40)
-                } else {
-                    40
-                };
-                let bin_idx_half = if (50.0..=250.0).contains(&half_bpm_val) {
-                    (((half_bpm_val - 50.0) / 5.0).floor() as usize).min(40)
-                } else {
-                    40
-                };
-
-                // 如果快速倍频的直方图投票数没有达到慢速半频的 2.5 倍以上，则安全下折为慢速 BPM
-                if smooth_hist[bin_idx_best] < 2.5 * smooth_hist[bin_idx_half] {
-                    best_bpm /= 2.0;
+        // 临时构造粗略色度统计以辅助风格估计
+        let mut temp_chroma = [0.0f32; 12];
+        for frame in &spectrogram {
+            for (bin, &mag) in frame.iter().enumerate() {
+                let freq = bin as f32 * (sr / window_size as f32);
+                if (200.0..=2000.0).contains(&freq) {
+                    let midi_pitch = 69.0 + 12.0 * (freq / 440.0).log2();
+                    if midi_pitch >= 0.0 {
+                        let pc = (midi_pitch.round() as i32) % 12;
+                        if pc >= 0 {
+                            temp_chroma[pc as usize] += mag;
+                        }
+                    }
                 }
             }
+        }
 
-            // Metric Up-shifter & 3/4 Waltz Corrector:
-            // 慢速古典独奏保护哨 (Classical Guard)：对于 diff_variance < 0.035 的曲目（无强冲击鼓点、力度平滑），禁止上折，防止 octave 翻倍错误
-            if best_bpm < 75.0 && diff_variance >= 0.035 {
-                let double_bpm = best_bpm * 2.0;
-                let triple_bpm = best_bpm * 3.0;
-                let bin_idx_double = if (50.0..=250.0).contains(&double_bpm) {
-                    (((double_bpm - 50.0) / 5.0).floor() as usize).min(40)
-                } else {
-                    40
-                };
-                let bin_idx_triple = if (50.0..=250.0).contains(&triple_bpm) {
-                    (((triple_bpm - 50.0) / 5.0).floor() as usize).min(40)
-                } else {
-                    40
-                };
-                let double_vote = smooth_hist[bin_idx_double];
-                let triple_vote = smooth_hist[bin_idx_triple];
+        // 4. 运行风格分类器与多检测决策引擎 (BPM 估计部分)
+        let style_vector = StyleClassifier::classify(
+            &spectrogram,
+            &temp_chroma,
+            precomputed.onset_density,
+            precomputed.diff_variance,
+            precomputed.max_confidence,
+            sr,
+        );
 
-                let half_lag = best_lag / 2;
-                let half_corr = if half_lag <= max_lag {
-                    corr_norm[half_lag]
-                } else {
-                    0.0
-                };
-
-                if triple_vote > 0.35 * double_vote && triple_vote > 1.0 {
-                    best_bpm = triple_bpm;
-                } else if double_vote > 1.5 || half_corr > 0.25 {
-                    best_bpm = double_bpm;
-                }
-                // Otherwise, keep best_bpm as is (no upshift for truly slow classical pieces like Ballade No.1)
-            }
-
-            // 最终锁定健康节奏区间
-            while best_bpm < 60.0 {
-                best_bpm *= 2.0;
-            }
-            while best_bpm > 200.0 {
-                best_bpm /= 2.0;
-            }
-
-            // Ambient / beatless free rhythm fallback detection
-            if max_confidence < 0.28 || onset_density < 0.20 || diff_variance < 0.015 {
-                -1.0f32
-            } else {
-                best_bpm
-            }
-        } else {
-            -1.0f32 // Fallback Ambient BPM
-        };
+        let selector = EnsembleSelector::new();
+        let (estimated_bpm, _, confidence) =
+            selector.select(&temp_chroma, &spectrogram, &style_vector, &precomputed);
 
         // 自适应节奏主观体感映射 (tempo_feeling)
         let tempo_desc = if estimated_bpm < 0.0 {
@@ -291,10 +258,10 @@ impl SonicPipeline {
             "Extremely Rapid (Presto)"
         };
 
-        // 4. 初始化乐理分析器与全局 Chroma 累加器
+        // 5. 初始化乐理分析器与全局 Chroma 累加器
         let chord_classifier = ChordClassifier::new();
         let mut segments = Vec::new();
-        let mut global_chroma = vec![0.0f32; 12];
+        let mut global_chroma = [0.0f32; 12];
 
         // 根据 config.step_size 决定自适应分块帧数
         let frames_per_step = (config.step_size / frame_duration).round() as usize;
@@ -332,7 +299,7 @@ impl SonicPipeline {
             split_points = temp;
         }
 
-        // 预扫描计算全局最大 RMS 动态，以供局部相对 RMS (Relative RMS) 分类使用
+        // 预扫描计算全局最大 RMS 动态，以供局部相对 RMS 分类使用
         let mut global_max_rms = 0.0f32;
         for frame in &spectrogram {
             let sum_power: f32 = frame.iter().map(|&x| x * x).sum();
@@ -342,7 +309,7 @@ impl SonicPipeline {
             }
         }
         if global_max_rms < 0.0001 {
-            global_max_rms = 1.0; // 避免除以零
+            global_max_rms = 1.0;
         }
 
         let mut frame_idx = 0;
@@ -365,7 +332,6 @@ impl SonicPipeline {
                 break;
             }
 
-            // 4. 计算区间平均特征
             let mut sum_rms = 0.0f32;
             let mut sum_centroid = 0.0f32;
             let mut sum_flatness = 0.0f32;
@@ -377,7 +343,7 @@ impl SonicPipeline {
                 let rms = (sum_power / frame.len() as f32).sqrt();
                 sum_rms += rms;
 
-                // 谱质心 (音色亮度)
+                // 谱质心
                 let mut num = 0.0f32;
                 let mut den = 0.0f32;
                 for (bin, &mag) in frame.iter().enumerate() {
@@ -388,7 +354,7 @@ impl SonicPipeline {
                 let centroid = if den > 0.0 { num / den } else { 0.0 };
                 sum_centroid += centroid;
 
-                // 频谱平坦度 (Spectral Flatness) 计算，量化稀疏极简编曲
+                // 频谱平坦度计算
                 let mut sum_log = 0.0f64;
                 let mut sum_val = 0.0f32;
                 let eps = 1e-7f64;
@@ -407,8 +373,8 @@ impl SonicPipeline {
                 sum_flatness += flatness;
 
                 // 物理旋律音高追踪器 (Melodic Pitch Tracker)
-                let bin_300 = (300.0 / (sr / window_size as f32)).round() as usize; // ~14
-                let bin_1200 = (1200.0 / (sr / window_size as f32)).round() as usize; // ~56
+                let bin_300 = (300.0 / (sr / window_size as f32)).round() as usize;
+                let bin_1200 = (1200.0 / (sr / window_size as f32)).round() as usize;
                 let mut max_mag = 0.0f32;
                 let mut melody_bin = 0;
                 let mut sum_mag_in_band = 0.0f32;
@@ -425,7 +391,6 @@ impl SonicPipeline {
                 let mean_mag_in_band = sum_mag_in_band / (bin_1200 - bin_300 + 1) as f32;
                 let mut melody_pitch_class = -1;
 
-                // 置信度阈值判定：最强音高能量超出平均本底能量的 2.2 倍，方认定为单一纯正的人声/主旋律线条
                 if max_mag > mean_mag_in_band * 2.2 && melody_bin > 0 {
                     let melody_freq = melody_bin as f32 * (sr / window_size as f32);
                     let melody_midi = 69.0 + 12.0 * (melody_freq / 440.0).log2();
@@ -435,14 +400,8 @@ impl SonicPipeline {
                     }
                 }
 
-                // Apply flatness-based noise suppression to only accumulate chroma from tonal/melodic frames.
-                let tonal_weight = if flatness > 0.22 {
-                    0.05f32 // Suppress noisy frames (stomps, claps, percussion, silence)
-                } else {
-                    1.0f32
-                };
+                let tonal_weight = if flatness > 0.22 { 0.05f32 } else { 1.0f32 };
 
-                // 色度向量合并 (基于 200Hz - 2kHz 审美带通投影，以线性插值消除离散傅里叶频段泄漏，动态旋律加权以消除敲击/共鸣底噪)
                 for (bin, &mag) in frame.iter().enumerate() {
                     let freq = bin as f32 * (sr / window_size as f32);
                     if (200.0..=2000.0).contains(&freq) {
@@ -457,7 +416,6 @@ impl SonicPipeline {
                             let pc_high = (p_ceil as i32) % 12;
 
                             if pc_low >= 0 && pc_high >= 0 {
-                                // Dynamic melody boost and noise gate
                                 let weight_low = if melody_pitch_class >= 0 {
                                     if pc_low == melody_pitch_class {
                                         12.0f32
@@ -508,7 +466,6 @@ impl SonicPipeline {
             let mean_centroid = sum_centroid / counts as f32;
             let mean_flatness = sum_flatness / counts as f32;
 
-            // 计算分片中的时域 Peak 值以求出 Crest Factor（波峰因数），量化混音的冲击感与呼吸感
             let start_sample = (t_start * sr) as usize;
             let end_sample = ((t_end * sr) as usize).min(samples.len());
             let mut peak_val = 0.0f32;
@@ -526,8 +483,6 @@ impl SonicPipeline {
                 0.0
             };
 
-            // A. 自适应动态电平映射（通过 relative_rms、crest_factor 与 mean_flatness 频谱平坦度联合映射）
-            // 稀疏编曲（如 We Will Rock You）能量集中少数频段，flatness 显著偏低 (< 0.12)，据此进行动态电平抑制，纠正语义错位
             let relative_rms = mean_rms / global_max_rms;
             let is_sparse = mean_flatness < 0.12f32;
 
@@ -565,7 +520,6 @@ impl SonicPipeline {
                 }
             };
 
-            // B. 音色亮度映射
             let timbre_desc = if mean_centroid < 900.0 {
                 "Deep & Dark (Muddy/Sub-heavy)"
             } else if mean_centroid < 1600.0 {
@@ -578,7 +532,6 @@ impl SonicPipeline {
                 "Piercing & Airy (Airy presence)"
             };
 
-            // C. 节奏活跃度估算 (基于相对 RMS，使整体对不同歌曲尺度的活跃度反映更加健康自适应)
             let rhythm_desc = if relative_rms < 0.02 {
                 "Static & Ambient sustained notes"
             } else if relative_rms < 0.25 {
@@ -587,7 +540,6 @@ impl SonicPipeline {
                 "Steady Beat (Clear rhythmic dynamic)"
             };
 
-            // D. 和弦估计
             let chord = chord_classifier.classify(&sum_chroma);
 
             segments.push(SegmentAesthetic {
@@ -604,9 +556,22 @@ impl SonicPipeline {
             interval_idx += 1;
         }
 
-        // 估计全局属性
-        let key_detector = KeyDetector::new();
-        let global_key = key_detector.detect(&global_chroma);
+        // 6. 后扫描全局调性属性 (Chroma 充分积累后由 Decision Engine 选择最佳调性)
+        let (_, global_key, _) =
+            selector.select(&global_chroma, &spectrogram, &style_vector, &precomputed);
+
+        // 获取主导音乐风格标签
+        let primary_style = if style_vector.ambient_free > 0.40 {
+            "Ambient/Ambient Free"
+        } else if style_vector.traditional_chinese > 0.40 {
+            "Traditional Chinese Folk/Modal"
+        } else if style_vector.jazz_rubato > 0.40 {
+            "Jazz/Rubato Improvisation"
+        } else if style_vector.classical > style_vector.electronic_pop {
+            "Western Classical/Acoustic Solo"
+        } else {
+            "Pop/Rock/Electronic"
+        };
 
         let global_metadata = GlobalMetadata {
             filename: audio_path
@@ -619,12 +584,15 @@ impl SonicPipeline {
             estimated_bpm,
             estimated_global_key: global_key,
             tempo_feeling: tempo_desc.to_string(),
+            confidence,
+            primary_style: primary_style.to_string(),
         };
+
         let merged_segments = Self::merge_segments(segments);
         Ok((global_metadata, merged_segments))
     }
 
-    /// Extracts the fundamental root pitch class from a complex chord symbol (e.g. "A#maj7" -> "A#", "Dm7" -> "D")
+    /// Extracts the fundamental root pitch class from a complex chord symbol
     fn get_chord_root(chord: &str) -> &str {
         if chord == "Silent" || chord == "Unknown" {
             return chord;
@@ -644,7 +612,7 @@ impl SonicPipeline {
         chord
     }
 
-    /// Spatiotemporal Chunk Merger: compresses consecutive slices sharing identical Chord Root, Timbre, and Dynamic features into Phrase Blocks
+    /// Spatiotemporal Chunk Merger
     fn merge_segments(segs: Vec<SegmentAesthetic>) -> Vec<SegmentAesthetic> {
         if segs.is_empty() {
             return segs;
@@ -675,20 +643,18 @@ impl SonicPipeline {
         merged
     }
 
-    /// 执行双版本对比演绎分析 pipeline，产生带 DTW 时间戳对齐的版本比对数据
+    /// 执行双版本对比演绎分析 pipeline
     pub fn process_comparative(path_a: &Path, path_b: &Path) -> Result<String, String> {
         let default_config = SonicConfig::default();
         let (meta_a, segs_a) = Self::process_single(path_a, &default_config)?;
         let (meta_b, segs_b) = Self::process_single(path_b, &default_config)?;
 
-        // 1. 运行 DTW 时序规整对齐
         let energy_a: Vec<f32> = segs_a.iter().map(|s| s.raw_energy).collect();
         let energy_b: Vec<f32> = segs_b.iter().map(|s| s.raw_energy).collect();
 
         let aligner = DtwAligner::new();
         let path = aligner.align(&energy_a, &energy_b);
 
-        // 2. 格式化输出对齐比对 Markdown 报告
         let mut report = Vec::new();
         report.push("# SonicBridge: LLM-Readable Music Comparative Report (LRMD)\n".to_string());
         report.push("> [!IMPORTANT]".to_string());
@@ -710,7 +676,6 @@ impl SonicPipeline {
         report.push("| Music Step | Timeline A | Timeline B | Track A (Original) Interpretation | Track B (Cover) Interpretation |".to_string());
         report.push("| :--- | :--- | :--- | :--- | :--- |".to_string());
 
-        // 为了减小 LLM 报告篇幅，我们只取对齐路径中的非重复状态点
         let mut last_i = None;
         let mut last_j = None;
         let mut step = 1;
@@ -738,5 +703,645 @@ impl SonicPipeline {
         }
 
         Ok(report.join("\n"))
+    }
+}
+
+// =========================================================================
+// Multi-Detector and Confidence Voting Ensemble Architecture (Scheme A)
+// =========================================================================
+
+pub struct PrecomputedFeatures {
+    pub envelope: Vec<f32>,
+    pub diff_variance: f32,
+    pub onset_density: f32,
+    pub smooth_hist: [f32; 41],
+    pub frame_duration: f32,
+    pub max_confidence: f32,
+    pub best_lag: usize,
+    pub corr_norm: Vec<f32>,
+    pub variance: f32,
+    pub peak_coeff: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct BpmHypothesis {
+    pub bpm: f32,
+    pub confidence: f32,
+    pub source: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct KeyHypothesis {
+    pub key: String,
+    pub confidence: f32,
+    pub source: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct DetectorResult {
+    pub bpm_candidates: Vec<BpmHypothesis>,
+    pub key_candidates: Vec<KeyHypothesis>,
+}
+
+pub trait SpecializedDetector {
+    fn name(&self) -> &'static str;
+    fn detect(
+        &self,
+        chroma: &[f32; 12],
+        spectrogram: &[Vec<f32>],
+        style: &StyleVector,
+        features: &PrecomputedFeatures,
+    ) -> DetectorResult;
+}
+
+pub struct AmbientFreeDetector;
+impl SpecializedDetector for AmbientFreeDetector {
+    fn name(&self) -> &'static str {
+        "Ambient/Free Rhythm Detector"
+    }
+
+    fn detect(
+        &self,
+        _chroma: &[f32; 12],
+        _spectrogram: &[Vec<f32>],
+        _style: &StyleVector,
+        features: &PrecomputedFeatures,
+    ) -> DetectorResult {
+        let mut bpm_candidates = Vec::new();
+        let mut key_candidates = Vec::new();
+
+        if features.onset_density < 0.22
+            || features.diff_variance < 0.018
+            || features.max_confidence < 0.25
+        {
+            bpm_candidates.push(BpmHypothesis {
+                bpm: -1.0,
+                confidence: 0.95,
+                source: "AmbientFreeDetector",
+            });
+            key_candidates.push(KeyHypothesis {
+                key: "Silent".to_string(),
+                confidence: 0.85,
+                source: "AmbientFreeDetector",
+            });
+        } else {
+            bpm_candidates.push(BpmHypothesis {
+                bpm: -1.0,
+                confidence: 0.05,
+                source: "AmbientFreeDetector",
+            });
+        }
+
+        DetectorResult {
+            bpm_candidates,
+            key_candidates,
+        }
+    }
+}
+
+pub struct ChinesePentatonicDetector;
+impl SpecializedDetector for ChinesePentatonicDetector {
+    fn name(&self) -> &'static str {
+        "Chinese Pentatonic Detector"
+    }
+
+    fn detect(
+        &self,
+        chroma: &[f32; 12],
+        _spectrogram: &[Vec<f32>],
+        _style: &StyleVector,
+        _features: &PrecomputedFeatures,
+    ) -> DetectorResult {
+        let mut key_candidates = Vec::new();
+        let pitch_names = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
+
+        for (idx, &root_name) in pitch_names.iter().enumerate() {
+            let root_energy_val = chroma[idx].max(1e-5);
+            let gong_missing = chroma[(idx + 5) % 12] + chroma[(idx + 11) % 12];
+            let shang_missing = chroma[(idx + 3) % 12] + chroma[(idx + 9) % 12];
+            let jiao_missing = chroma[(idx + 1) % 12] + chroma[(idx + 7) % 12];
+            let zhi_missing = chroma[(idx + 4) % 12] + chroma[(idx + 10) % 12];
+            let yu_missing = chroma[(idx + 2) % 12] + chroma[(idx + 8) % 12];
+
+            let pentatonic_threshold = 0.27 * root_energy_val;
+
+            if gong_missing < pentatonic_threshold {
+                key_candidates.push(KeyHypothesis {
+                    key: format!("{} 宫调式", root_name),
+                    confidence: 0.88 * (1.0 - gong_missing / pentatonic_threshold),
+                    source: "ChinesePentatonicDetector",
+                });
+            }
+            if shang_missing < pentatonic_threshold {
+                key_candidates.push(KeyHypothesis {
+                    key: format!("{} 商调式", root_name),
+                    confidence: 0.88 * (1.0 - shang_missing / pentatonic_threshold),
+                    source: "ChinesePentatonicDetector",
+                });
+            }
+            if jiao_missing < pentatonic_threshold {
+                key_candidates.push(KeyHypothesis {
+                    key: format!("{} 角调式", root_name),
+                    confidence: 0.88 * (1.0 - jiao_missing / pentatonic_threshold),
+                    source: "ChinesePentatonicDetector",
+                });
+            }
+            if zhi_missing < pentatonic_threshold {
+                key_candidates.push(KeyHypothesis {
+                    key: format!("{} 徵调式", root_name),
+                    confidence: 0.88 * (1.0 - zhi_missing / pentatonic_threshold),
+                    source: "ChinesePentatonicDetector",
+                });
+            }
+            if yu_missing < pentatonic_threshold {
+                key_candidates.push(KeyHypothesis {
+                    key: format!("{} 羽调式", root_name),
+                    confidence: 0.88 * (1.0 - yu_missing / pentatonic_threshold),
+                    source: "ChinesePentatonicDetector",
+                });
+            }
+        }
+
+        DetectorResult {
+            bpm_candidates: Vec::new(),
+            key_candidates,
+        }
+    }
+}
+
+pub struct WesternClassicalDetector;
+impl SpecializedDetector for WesternClassicalDetector {
+    fn name(&self) -> &'static str {
+        "Western Classical Detector"
+    }
+
+    fn detect(
+        &self,
+        chroma: &[f32; 12],
+        _spectrogram: &[Vec<f32>],
+        _style: &StyleVector,
+        features: &PrecomputedFeatures,
+    ) -> DetectorResult {
+        let mut bpm_candidates = Vec::new();
+        let mut key_candidates = Vec::new();
+
+        if features.best_lag > 0 {
+            let best_bpm = 60.0 / (features.best_lag as f32 * features.frame_duration);
+            if best_bpm < 75.0 && features.diff_variance < 0.035 {
+                bpm_candidates.push(BpmHypothesis {
+                    bpm: best_bpm,
+                    confidence: 0.90,
+                    source: "WesternClassicalDetector",
+                });
+            } else {
+                bpm_candidates.push(BpmHypothesis {
+                    bpm: best_bpm,
+                    confidence: 0.60,
+                    source: "WesternClassicalDetector",
+                });
+            }
+        }
+
+        let pitch_names = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
+        let kk_major = vec![
+            6.35, 2.23, 3.48, 1.50, 4.80, 4.09, 2.52, 5.19, 2.00, 3.66, 2.29, 2.88,
+        ];
+        let kk_minor = vec![
+            6.33, 2.68, 3.52, 6.20, 1.50, 3.53, 2.54, 4.75, 4.80, 2.69, 3.34, 3.17,
+        ];
+
+        let mut max_sim = -1.0f32;
+        let mut best_key_idx = 0;
+        let mut best_is_major = true;
+
+        let chroma_norm = chroma.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-5);
+
+        for i in 0..12 {
+            let mut maj_shifted = vec![0.0f32; 12];
+            for j in 0..12 {
+                maj_shifted[j] = kk_major[(j + 12 - i) % 12];
+            }
+            let maj_norm = maj_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let dot_maj: f32 = chroma
+                .iter()
+                .zip(&maj_shifted)
+                .map(|(&x, &y)| x * y / maj_norm)
+                .sum();
+            let sim_maj = dot_maj / chroma_norm;
+            if sim_maj > max_sim {
+                max_sim = sim_maj;
+                best_key_idx = i;
+                best_is_major = true;
+            }
+
+            let mut min_shifted = vec![0.0f32; 12];
+            for j in 0..12 {
+                min_shifted[j] = kk_minor[(j + 12 - i) % 12];
+            }
+            let min_norm = min_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let dot_min: f32 = chroma
+                .iter()
+                .zip(&min_shifted)
+                .map(|(&x, &y)| x * y / min_norm)
+                .sum();
+            let sim_min = dot_min / chroma_norm;
+            if sim_min > max_sim {
+                max_sim = sim_min;
+                best_key_idx = i;
+                best_is_major = false;
+            }
+        }
+
+        let mut final_root_idx = best_key_idx;
+        let mut final_is_major = best_is_major;
+
+        if !best_is_major {
+            let submediant_idx = (best_key_idx + 8) % 12;
+            if chroma[submediant_idx] > 1.05 * chroma[best_key_idx] {
+                final_root_idx = submediant_idx;
+                final_is_major = true;
+            }
+        }
+
+        let energy_minor_third = chroma[(final_root_idx + 3) % 12];
+        let energy_major_third = chroma[(final_root_idx + 4) % 12];
+        let root_energy = chroma[final_root_idx];
+        let corrected_major_third = (energy_major_third - 0.20 * root_energy).max(0.0);
+
+        if final_is_major {
+            if energy_minor_third > 0.88 * corrected_major_third {
+                final_is_major = false;
+            }
+        } else {
+            if corrected_major_third > 1.15 * energy_minor_third {
+                final_is_major = true;
+            }
+        }
+
+        let key_name = if final_is_major {
+            format!("{} Major", pitch_names[final_root_idx])
+        } else {
+            format!("{} Minor", pitch_names[final_root_idx])
+        };
+
+        key_candidates.push(KeyHypothesis {
+            key: key_name,
+            confidence: max_sim,
+            source: "WesternClassicalDetector",
+        });
+
+        DetectorResult {
+            bpm_candidates,
+            key_candidates,
+        }
+    }
+}
+
+pub struct PopElectronicDetector;
+impl SpecializedDetector for PopElectronicDetector {
+    fn name(&self) -> &'static str {
+        "Pop/Electronic/Rock Detector"
+    }
+
+    fn detect(
+        &self,
+        chroma: &[f32; 12],
+        _spectrogram: &[Vec<f32>],
+        _style: &StyleVector,
+        features: &PrecomputedFeatures,
+    ) -> DetectorResult {
+        let mut bpm_candidates = Vec::new();
+        let mut key_candidates = Vec::new();
+
+        if features.best_lag > 0 {
+            let best_bpm = 60.0 / (features.best_lag as f32 * features.frame_duration);
+
+            let double_lag = features.best_lag * 2;
+            let mut best_bpm_val = best_bpm;
+            if double_lag < features.corr_norm.len()
+                && features.corr_norm[double_lag] > 0.45 * features.corr_norm[features.best_lag]
+            {
+                let half_bpm = best_bpm / 2.0;
+                let bin_idx_best = (((best_bpm - 50.0) / 5.0).floor() as usize).min(40);
+                let bin_idx_half = (((half_bpm - 50.0) / 5.0).floor() as usize).min(40);
+                if features.smooth_hist[bin_idx_best] < 2.5 * features.smooth_hist[bin_idx_half] {
+                    best_bpm_val = half_bpm;
+                }
+            }
+
+            if best_bpm_val < 75.0 && features.diff_variance >= 0.035 {
+                let double_bpm = best_bpm_val * 2.0;
+                let bin_idx_double = (((double_bpm - 50.0) / 5.0).floor() as usize).min(40);
+                if features.smooth_hist[bin_idx_double] > 1.5 {
+                    best_bpm_val = double_bpm;
+                }
+            }
+
+            bpm_candidates.push(BpmHypothesis {
+                bpm: best_bpm_val,
+                confidence: 0.85,
+                source: "PopElectronicDetector",
+            });
+        }
+
+        let pitch_names = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
+        let base_major = vec![
+            6.47, 2.11, 3.49, 1.90, 4.70, 4.04, 2.51, 5.19, 2.05, 3.68, 2.24, 2.94,
+        ];
+        let base_minor = vec![
+            6.41, 2.64, 3.51, 6.10, 1.55, 3.51, 2.57, 4.77, 4.70, 2.64, 3.27, 3.13,
+        ];
+
+        let mut max_sim = -1.0f32;
+        let mut best_key_idx = 0;
+        let mut best_is_major = true;
+
+        let chroma_norm = chroma.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-5);
+
+        for i in 0..12 {
+            let mut maj_shifted = vec![0.0f32; 12];
+            for j in 0..12 {
+                maj_shifted[j] = base_major[(j + 12 - i) % 12];
+            }
+            let maj_norm = maj_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let dot_maj: f32 = chroma
+                .iter()
+                .zip(&maj_shifted)
+                .map(|(&x, &y)| x * y / maj_norm)
+                .sum();
+            let sim_maj = dot_maj / chroma_norm;
+            if sim_maj > max_sim {
+                max_sim = sim_maj;
+                best_key_idx = i;
+                best_is_major = true;
+            }
+
+            let mut min_shifted = vec![0.0f32; 12];
+            for j in 0..12 {
+                min_shifted[j] = base_minor[(j + 12 - i) % 12];
+            }
+            let min_norm = min_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let dot_min: f32 = chroma
+                .iter()
+                .zip(&min_shifted)
+                .map(|(&x, &y)| x * y / min_norm)
+                .sum();
+            let sim_min = dot_min / chroma_norm;
+            if sim_min > max_sim {
+                max_sim = sim_min;
+                best_key_idx = i;
+                best_is_major = false;
+            }
+        }
+
+        let final_root_idx = best_key_idx;
+        let mut final_is_major = best_is_major;
+
+        let energy_minor_third = chroma[(final_root_idx + 3) % 12];
+        let energy_major_third = chroma[(final_root_idx + 4) % 12];
+        let root_energy = chroma[final_root_idx];
+        let corrected_major_third = (energy_major_third - 0.20 * root_energy).max(0.0);
+
+        if final_is_major {
+            if energy_minor_third > 0.88 * corrected_major_third {
+                final_is_major = false;
+            }
+        } else {
+            if corrected_major_third > 1.15 * energy_minor_third {
+                final_is_major = true;
+            }
+        }
+
+        let key_name = if final_is_major {
+            format!("{} Major", pitch_names[final_root_idx])
+        } else {
+            format!("{} Minor", pitch_names[final_root_idx])
+        };
+
+        key_candidates.push(KeyHypothesis {
+            key: key_name,
+            confidence: max_sim,
+            source: "PopElectronicDetector",
+        });
+
+        DetectorResult {
+            bpm_candidates,
+            key_candidates,
+        }
+    }
+}
+
+pub struct JazzRubatoDetector;
+impl SpecializedDetector for JazzRubatoDetector {
+    fn name(&self) -> &'static str {
+        "Jazz/Rubato/Waltz Detector"
+    }
+
+    fn detect(
+        &self,
+        chroma: &[f32; 12],
+        _spectrogram: &[Vec<f32>],
+        style: &StyleVector,
+        features: &PrecomputedFeatures,
+    ) -> DetectorResult {
+        let mut bpm_candidates = Vec::new();
+        let mut key_candidates = Vec::new();
+
+        if features.best_lag > 0 {
+            let best_bpm = 60.0 / (features.best_lag as f32 * features.frame_duration);
+            let triple_bpm = best_bpm * 3.0;
+            let double_bpm = best_bpm * 2.0;
+
+            let bin_idx_double = (((double_bpm - 50.0) / 5.0).floor() as usize).min(40);
+            let bin_idx_triple = (((triple_bpm - 50.0) / 5.0).floor() as usize).min(40);
+
+            let double_vote = features.smooth_hist[bin_idx_double];
+            let triple_vote = features.smooth_hist[bin_idx_triple];
+
+            let mut confidence = 0.50;
+            let selected_bpm = if style.jazz_rubato > 0.40 || triple_vote > 0.30 * double_vote {
+                confidence = 0.85;
+                triple_bpm
+            } else {
+                double_bpm
+            };
+
+            bpm_candidates.push(BpmHypothesis {
+                bpm: selected_bpm,
+                confidence,
+                source: "JazzRubatoDetector",
+            });
+        }
+
+        let pitch_names = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
+        let temp_major = vec![5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0];
+        let temp_minor = vec![5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0];
+
+        let mut max_sim = -1.0f32;
+        let mut best_key_idx = 0;
+        let mut best_is_major = true;
+
+        let chroma_norm = chroma.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-5);
+
+        for i in 0..12 {
+            let mut maj_shifted = vec![0.0f32; 12];
+            for j in 0..12 {
+                maj_shifted[j] = temp_major[(j + 12 - i) % 12];
+            }
+            let maj_norm = maj_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let dot_maj: f32 = chroma
+                .iter()
+                .zip(&maj_shifted)
+                .map(|(&x, &y)| x * y / maj_norm)
+                .sum();
+            let sim_maj = dot_maj / chroma_norm;
+            if sim_maj > max_sim {
+                max_sim = sim_maj;
+                best_key_idx = i;
+                best_is_major = true;
+            }
+
+            let mut min_shifted = vec![0.0f32; 12];
+            for j in 0..12 {
+                min_shifted[j] = temp_minor[(j + 12 - i) % 12];
+            }
+            let min_norm = min_shifted.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let dot_min: f32 = chroma
+                .iter()
+                .zip(&min_shifted)
+                .map(|(&x, &y)| x * y / min_norm)
+                .sum();
+            let sim_min = dot_min / chroma_norm;
+            if sim_min > max_sim {
+                max_sim = sim_min;
+                best_key_idx = i;
+                best_is_major = false;
+            }
+        }
+
+        let key_name = if best_is_major {
+            format!("{} Major", pitch_names[best_key_idx])
+        } else {
+            format!("{} Minor", pitch_names[best_key_idx])
+        };
+
+        key_candidates.push(KeyHypothesis {
+            key: key_name,
+            confidence: max_sim,
+            source: "JazzRubatoDetector",
+        });
+
+        DetectorResult {
+            bpm_candidates,
+            key_candidates,
+        }
+    }
+}
+
+pub struct EnsembleSelector {
+    detectors: Vec<Box<dyn SpecializedDetector>>,
+}
+
+impl Default for EnsembleSelector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EnsembleSelector {
+    pub fn new() -> Self {
+        Self {
+            detectors: vec![
+                Box::new(AmbientFreeDetector),
+                Box::new(ChinesePentatonicDetector),
+                Box::new(WesternClassicalDetector),
+                Box::new(PopElectronicDetector),
+                Box::new(JazzRubatoDetector),
+            ],
+        }
+    }
+
+    pub fn select(
+        &self,
+        chroma: &[f32; 12],
+        spectrogram: &[Vec<f32>],
+        style: &StyleVector,
+        features: &PrecomputedFeatures,
+    ) -> (f32, String, f32) {
+        let mut all_bpm: Vec<BpmHypothesis> = Vec::new();
+        let mut all_key: Vec<KeyHypothesis> = Vec::new();
+
+        for detector in &self.detectors {
+            let res = detector.detect(chroma, spectrogram, style, features);
+            all_bpm.extend(res.bpm_candidates);
+            all_key.extend(res.key_candidates);
+        }
+
+        let mut best_bpm = -1.0;
+        let mut max_bpm_weight = -1.0;
+
+        for bpm_cand in &all_bpm {
+            let mut style_weight = match bpm_cand.source {
+                "AmbientFreeDetector" => style.ambient_free,
+                "WesternClassicalDetector" => style.classical,
+                "PopElectronicDetector" => style.electronic_pop,
+                "JazzRubatoDetector" => style.jazz_rubato,
+                _ => 0.20,
+            };
+
+            if bpm_cand.bpm > 0.0 {
+                let bpm_ratio = bpm_cand.bpm / 115.0;
+                let log_ratio = bpm_ratio.ln();
+                let comfort_weight = (-0.5 * (log_ratio / std::f32::consts::LN_2).powi(2)).exp();
+                style_weight *= comfort_weight;
+            }
+
+            let weight = bpm_cand.confidence * style_weight;
+            if weight > max_bpm_weight {
+                max_bpm_weight = weight;
+                best_bpm = bpm_cand.bpm;
+            }
+        }
+
+        if best_bpm > 0.0 {
+            while best_bpm < 60.0 {
+                best_bpm *= 2.0;
+            }
+            while best_bpm > 200.0 {
+                best_bpm /= 2.0;
+            }
+        }
+
+        let mut best_key = "Unknown".to_string();
+        let mut max_key_weight = -1.0;
+
+        for key_cand in &all_key {
+            let style_weight = match key_cand.source {
+                "AmbientFreeDetector" => style.ambient_free,
+                "ChinesePentatonicDetector" => style.traditional_chinese,
+                "WesternClassicalDetector" => style.classical,
+                "PopElectronicDetector" => style.electronic_pop,
+                "JazzRubatoDetector" => style.jazz_rubato,
+                _ => 0.20,
+            };
+
+            let weight = key_cand.confidence * style_weight;
+            if weight > max_key_weight {
+                max_key_weight = weight;
+                best_key = key_cand.key.clone();
+            }
+        }
+
+        let joint_confidence = (max_bpm_weight.max(0.0) + max_key_weight.max(0.0)) / 2.0;
+
+        (best_bpm, best_key, joint_confidence)
     }
 }

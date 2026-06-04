@@ -4,6 +4,14 @@ All notable changes to the `sonic-bridge` core library and CLI will be documente
 
 ---
 
+## [0.7.0] - 2026-06-04
+
+### Added
+- **Native Parallel Batch Mode (`--batch <dir>`)**: Implemented recursive directory walking using zero-allocation case-insensitive pattern matching, and a thread-safe task queue (`Arc<Mutex<Vec<PathBuf>>>`) orchestrating parallel analysis across worker threads.
+- **Output Subdirectory Replication**: Supports `--out-dir` to output files mirroring the original directory layout structure.
+- **Interactive Progress Dashboard**: Displays dynamic status tracking, thread count, processed/total file counts, and smoothed ETA predictions inside terminals.
+- **Fail-safe Exit Status Code**: Enforces strict exit status codes, exiting with status code 0 on complete success, and status code 1 if any target track fails to compile.
+
 ## [0.4.1] - 2026-05-31
 
 ### Added

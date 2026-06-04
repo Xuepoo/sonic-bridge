@@ -58,6 +58,16 @@ fn main() {
     let mut custom_threshold = None;
     let mut clean_args = Vec::new();
 
+    // Batch mode variables
+    let mut batch_dir = None;
+    let mut out_dir_opt = None;
+    let mut skip_existing_flag = true;
+    let mut force_flag = false;
+    let mut custom_jobs = None;
+    let mut custom_exts = None;
+    let mut is_dry_run = false;
+    let mut no_progress_flag = false;
+
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--config" {
@@ -99,6 +109,60 @@ fn main() {
         } else if args[i] == "--render" {
             use_render = true;
             i += 1;
+        } else if args[i] == "--batch" {
+            if i + 1 < args.len() {
+                batch_dir = Some(args[i + 1].clone());
+                i += 2;
+            } else {
+                eprintln!(
+                    "\x1b[1;31m[-] Error:\x1b[0m --batch option requires a target directory."
+                );
+                std::process::exit(1);
+            }
+        } else if args[i] == "--out-dir" {
+            if i + 1 < args.len() {
+                out_dir_opt = Some(args[i + 1].clone());
+                i += 2;
+            } else {
+                eprintln!("\x1b[1;31m[-] Error:\x1b[0m --out-dir option requires a destination directory.");
+                std::process::exit(1);
+            }
+        } else if args[i] == "--skip-existing" {
+            skip_existing_flag = true;
+            i += 1;
+        } else if args[i] == "--force" {
+            force_flag = true;
+            skip_existing_flag = false;
+            i += 1;
+        } else if args[i] == "-j" || args[i] == "--jobs" {
+            if i + 1 < args.len() {
+                if let Ok(jobs) = args[i + 1].parse::<usize>() {
+                    custom_jobs = Some(jobs);
+                } else {
+                    eprintln!(
+                        "\x1b[1;31m[-] Error:\x1b[0m --jobs option requires a valid integer."
+                    );
+                    std::process::exit(1);
+                }
+                i += 2;
+            } else {
+                eprintln!("\x1b[1;31m[-] Error:\x1b[0m --jobs option requires a value.");
+                std::process::exit(1);
+            }
+        } else if args[i] == "--ext" {
+            if i + 1 < args.len() {
+                custom_exts = Some(args[i + 1].clone());
+                i += 2;
+            } else {
+                eprintln!("\x1b[1;31m[-] Error:\x1b[0m --ext option requires extensions list.");
+                std::process::exit(1);
+            }
+        } else if args[i] == "--dry-run" {
+            is_dry_run = true;
+            i += 1;
+        } else if args[i] == "--no-progress" {
+            no_progress_flag = true;
+            i += 1;
         } else if args[i].starts_with('-') && !Path::new(&args[i]).exists() {
             eprintln!(
                 "\x1b[1;31m[-] Error:\x1b[0m Unknown option: \x1b[33m{}\x1b[0m",
@@ -112,7 +176,7 @@ fn main() {
         }
     }
 
-    if clean_args.is_empty() {
+    if clean_args.is_empty() && batch_dir.is_none() {
         print_usage();
         return;
     }
@@ -142,6 +206,77 @@ fn main() {
     }
     if let Some(t) = custom_threshold {
         config.onset_threshold = t;
+    }
+
+    // Overrides for Batch configurations
+    if let Some(out) = out_dir_opt {
+        config.out_dir = Some(out);
+    }
+    config.skip_existing = skip_existing_flag;
+    if force_flag {
+        config.force = true;
+        config.skip_existing = false;
+    }
+    if let Some(j) = custom_jobs {
+        config.jobs = Some(j);
+    }
+    if let Some(exts_str) = custom_exts {
+        config.extensions = exts_str.split(',').map(|s| s.trim().to_string()).collect();
+    }
+
+    if let Some(ref dir_str) = batch_dir {
+        let dir_path = normalize_path(dir_str);
+        if !dir_path.exists() {
+            eprintln!(
+                "\x1b[1;31m[-] Error:\x1b[0m Directory does not exist: \x1b[33m{}\x1b[0m",
+                dir_path.display()
+            );
+            std::process::exit(1);
+        }
+
+        match sonic_bridge::batch::run_batch(&config, &dir_path, is_dry_run, no_progress_flag) {
+            Ok(summary) => {
+                if is_dry_run {
+                    println!(
+                        "[+] Would process {} files (skipping {} existing)",
+                        summary.total, summary.skipped
+                    );
+                    std::process::exit(0);
+                }
+
+                if !config.quiet_mode {
+                    let avg_dur = if summary.processed > 0 {
+                        summary.elapsed.as_secs_f32() / summary.processed as f32
+                    } else {
+                        0.0
+                    };
+                    println!();
+                    println!(
+                        "\x1b[1;32m[+]\x1b[0m Batch complete: {} analyzed, {} skipped, {} errors",
+                        summary.processed - summary.failed,
+                        summary.skipped,
+                        summary.failed
+                    );
+                    println!(
+                        "\x1b[1;32m[+]\x1b[0m Total time: {:.2?} (avg {:.2}s/file)",
+                        summary.elapsed, avg_dur
+                    );
+                }
+
+                if summary.failed > 0 {
+                    eprintln!("\n\x1b[1;31m[-] Failed Files Summary:\x1b[0m");
+                    for (file, err) in &summary.errors {
+                        eprintln!("  * \x1b[33m{}\x1b[0m: {}", file.display(), err);
+                    }
+                    std::process::exit(1);
+                }
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("\x1b[1;31m[-] Batch processing failed:\x1b[0m {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 
     if clean_args.len() == 1 {
@@ -191,64 +326,7 @@ fn main() {
 
         match SonicPipeline::process_single(&audio_path, &config) {
             Ok((meta, segs)) => {
-                let mut report = Vec::new();
-                report.push("# SonicBridge: LLM-Readable Music Descriptor (LRMD)\n".to_string());
-                report.push("> [!NOTE]".to_string());
-                report.push("> This is a physical-to-semantic acoustic report generated by SonicBridge. Pure-text LLMs can 'listen to' and 'appreciate' this track via this spatiotemporal matrix.\n".to_string());
-
-                report.push("## 1. Global Acoustic & Musicological Metadata".to_string());
-                report.push(format!("- **Filename**: `{}`", meta.filename));
-                report.push(format!(
-                    "- **Duration**: `{:.2} seconds`",
-                    meta.duration_seconds
-                ));
-                if meta.estimated_bpm < 0.0 {
-                    report.push(format!(
-                        "- **Tempo (BPM)**: `Unknown (Ambient / Free Rhythm)` ({})",
-                        meta.tempo_feeling
-                    ));
-                } else {
-                    report.push(format!(
-                        "- **Tempo (BPM)**: `{:.1} BPM` ({})",
-                        meta.estimated_bpm, meta.tempo_feeling
-                    ));
-                }
-                report.push(format!(
-                    "- **Estimated Key**: `{}`",
-                    meta.estimated_global_key
-                ));
-                report.push(format!("- **Primary Style**: `{}`", meta.primary_style));
-                report.push(format!(
-                    "- **Analysis Confidence**: `{:.2}`\n",
-                    meta.confidence
-                ));
-
-                let interval_header = if is_onset_active {
-                    "## 2. Spatiotemporal Track Analysis (Adaptive Onset Intervals)"
-                } else if is_beat_active {
-                    "## 2. Spatiotemporal Track Analysis (Beat-Synchronous Resampling)"
-                } else {
-                    &format!(
-                        "## 2. Spatiotemporal Track Analysis ({:.1}-Second Intervals)",
-                        config.step_size
-                    )
-                };
-                report.push(interval_header.to_string());
-                report.push("| Timeline | Chord | Dynamic Intensity | Timbral Brightness | Rhythmic & Transient Activity |".to_string());
-                report.push("| :--- | :--- | :--- | :--- | :--- |".to_string());
-
-                for seg in &segs {
-                    report.push(format!(
-                        "| **{}** | `{}` | {} | {} | {} |",
-                        seg.time_range,
-                        seg.chord,
-                        seg.dynamic_level,
-                        seg.timbre_brightness,
-                        seg.rhythm_activity
-                    ));
-                }
-
-                let report_text = report.join("\n");
+                let report_text = SonicPipeline::generate_lrmd_report(&meta, &segs, &config);
 
                 // 保存到本地
                 let out_path = format!("{}.lrmd.md", audio_path.display());
@@ -363,6 +441,9 @@ fn print_usage() {
     println!("  \x1b[1mComparative Track Alignment (DTW Cross-Matching):\x1b[0m");
     println!("    sonic-bridge \x1b[32m<track_A>\x1b[0m \x1b[32m<track_B>\x1b[0m");
     println!();
+    println!("  \x1b[1mBatch Processing (Directory Scan Mode):\x1b[0m");
+    println!("    sonic-bridge \x1b[32m--batch <directory>\x1b[0m [options]");
+    println!();
     println!("\x1b[1;33mOPTIONS:\x1b[0m");
     println!("  \x1b[32m--onset\x1b[0m          Enable event-driven adaptive interval segmenting (Onset detection)");
     println!("                   (Defaults to fixed step time segmenting if omitted)");
@@ -374,6 +455,15 @@ fn print_usage() {
         "  \x1b[32m--render\x1b[0m         Start dynamic real-time terminal appreciation scrolling"
     );
     println!("                   (Requires a matching .alrc file under the same directory)");
+    println!();
+    println!("  \x1b[1;33mBATCH OPTIONS:\x1b[0m");
+    println!("  \x1b[32m--out-dir <dir>\x1b[0m  Output reports to this target destination path");
+    println!("  \x1b[32m--skip-existing\x1b[0m  Skip tracks with existing .lrmd.md (default)");
+    println!("  \x1b[32m--force\x1b[0m          Force processing and override skip logic");
+    println!("  \x1b[32m-j, --jobs <N>\x1b[0m   Number of parallel threads");
+    println!("  \x1b[32m--ext <exts>\x1b[0m     Comma-separated extensions to scan");
+    println!("  \x1b[32m--dry-run\x1b[0m        List files that would be processed");
+    println!("  \x1b[32m--no-progress\x1b[0m    Disable rendering progress bars");
     println!("  \x1b[32m-h, --help\x1b[0m       Show this premium help manual");
     println!("  \x1b[32m-v, --version\x1b[0m    Show current version info");
     println!();

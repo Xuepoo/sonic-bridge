@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use serde_json;
 use sonic_bridge::config::SonicConfig;
 use sonic_bridge::pipeline::SonicPipeline;
 use std::fs;

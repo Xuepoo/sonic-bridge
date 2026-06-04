@@ -1,4 +1,5 @@
 pub mod alignment;
+pub mod batch;
 pub mod config;
 pub mod decoder;
 pub mod dsp;

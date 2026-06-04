@@ -11,6 +11,21 @@ fn test_xdg_path_resolver_and_default_loading() {
     assert!(!default_config.onset_mode);
     assert!(!default_config.beat_mode);
     assert_eq!(default_config.onset_threshold, 0.5f32);
+    assert_eq!(default_config.out_dir, None);
+    assert!(default_config.skip_existing);
+    assert!(!default_config.force);
+    assert_eq!(default_config.jobs, None);
+    assert_eq!(
+        default_config.extensions,
+        vec![
+            "mp3".to_string(),
+            "flac".to_string(),
+            "wav".to_string(),
+            "m4a".to_string(),
+            "aac".to_string(),
+            "ogg".to_string(),
+        ]
+    );
 }
 
 #[test]

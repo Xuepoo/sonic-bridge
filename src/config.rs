@@ -12,6 +12,12 @@ pub struct SonicConfig {
     pub onset_threshold: f32,
     pub cache_dir: String,
     pub quiet_mode: bool,
+    // v0.6.0 Batch Mode Fields
+    pub out_dir: Option<String>,
+    pub skip_existing: bool,
+    pub force: bool,
+    pub jobs: Option<usize>,
+    pub extensions: Vec<String>,
 }
 
 impl Default for SonicConfig {
@@ -23,6 +29,18 @@ impl Default for SonicConfig {
             onset_threshold: 0.5,
             cache_dir: get_xdg_cache_path().to_str().unwrap_or("").to_string(),
             quiet_mode: false,
+            out_dir: None,
+            skip_existing: true,
+            force: false,
+            jobs: None,
+            extensions: vec![
+                "mp3".to_string(),
+                "flac".to_string(),
+                "wav".to_string(),
+                "m4a".to_string(),
+                "aac".to_string(),
+                "ogg".to_string(),
+            ],
         }
     }
 }
